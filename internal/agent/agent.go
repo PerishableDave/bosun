@@ -139,12 +139,13 @@ func (e *turnError) Unwrap() error { return e.err }
 // iff done was published.
 func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText string) (err error) {
 	var reply strings.Builder // assistant text of this turn, for memory extraction
+	untrusted := false        // any tool result this turn was untrusted (gates extraction)
 	defer func() {
 		if err == nil {
 			// Start extraction before done is published, so a client that
 			// has seen done can rely on Wait covering this turn.
 			a.extractAsync(memory.Turn{UserID: userID, ConversationID: conversationID,
-				UserText: userText, AssistantText: reply.String()})
+				UserText: userText, AssistantText: reply.String(), Untrusted: untrusted})
 			a.publish(userID, events.TypeDone, events.DoneData{ConversationID: conversationID})
 			return
 		}
@@ -212,7 +213,8 @@ func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText 
 		if len(uses) == 0 {
 			return nil // end_turn, max_tokens, or any other stop without tool calls
 		}
-		results := a.runTools(ctx, userID, conversationID, uses)
+		results, u := a.runTools(ctx, userID, conversationID, uses)
+		untrusted = untrusted || u
 		toolMsg := llm.Message{Role: llm.RoleTool, Content: results}
 		if ctx.Err() != nil {
 			// Keep the stored history well-formed (every tool_use answered)
@@ -294,8 +296,8 @@ func (a *Agent) callModel(ctx context.Context, prov llm.Provider, req llm.Reques
 // block per call. Denials and failures become IsError results the model can
 // read; only cancellation of ctx stops early (remaining calls are answered
 // as canceled so the history stays well-formed).
-func (a *Agent) runTools(ctx context.Context, userID int64, convID string, uses []llm.ContentBlock) []llm.ContentBlock {
-	out := make([]llm.ContentBlock, 0, len(uses))
+func (a *Agent) runTools(ctx context.Context, userID int64, convID string, uses []llm.ContentBlock) (out []llm.ContentBlock, untrusted bool) {
+	out = make([]llm.ContentBlock, 0, len(uses))
 	for _, u := range uses {
 		if ctx.Err() != nil {
 			out = append(out, llm.ToolResultBlock(u.ID, "Tool call not run: the turn was canceled.", true))
@@ -307,6 +309,7 @@ func (a *Agent) runTools(ctx context.Context, userID int64, convID string, uses 
 		var denied *dispatch.DeniedError
 		switch {
 		case err == nil:
+			untrusted = untrusted || res.Untrusted
 			out = append(out, llm.ToolResultBlock(u.ID, dispatch.RenderForModel(res), false))
 		case errors.As(err, &denied):
 			out = append(out, llm.ToolResultBlock(u.ID, fmt.Sprintf(
@@ -318,7 +321,7 @@ func (a *Agent) runTools(ctx context.Context, userID int64, convID string, uses 
 			out = append(out, llm.ToolResultBlock(u.ID, "Tool error: "+err.Error(), true))
 		}
 	}
-	return out
+	return out, untrusted
 }
 
 // toolSpecs returns the tool definitions offered to the model, under

@@ -313,6 +313,11 @@ Per-user, local, inspectable.
   ones. They are stored with `source = "conv:<conversation id>"`. It runs in
   the background under the daemon's context (30s timeout) and is audited as an
   `llm_request` with `purpose: memory_extraction`.
+- Injection guard: if any tool result consumed during the turn was untrusted
+  (web page, email, MCP output), the model-based extraction is **skipped**,
+  because the assistant's reply may echo attacker-controlled text and a planted
+  memory would later sit in the system prompt unwrapped. Only an explicit
+  "remember that ..." in the user's own message creates a memory on such turns.
 - Control: `bosun memory list|add|edit|forget` (and `GET/POST/PUT/DELETE
   /v1/memory`). Users see only their own memory; admins cannot read other
   users' memory.

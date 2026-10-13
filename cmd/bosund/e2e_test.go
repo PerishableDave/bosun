@@ -380,7 +380,9 @@ func TestEndToEnd(t *testing.T) {
 			}
 			llmEntries = append(llmEntries, e)
 		}
-		if err != nil || len(llmEntries) != 2 || extraction != 1 {
+		// stub.read returns an untrusted result, so memory extraction is
+		// skipped for this turn (see memory.Turn.Untrusted): no extraction entry.
+		if err != nil || len(llmEntries) != 2 || extraction != 0 {
 			t.Fatalf("llm_request audit = %d turn entries, %d extraction entries, %v", len(llmEntries), extraction, err)
 		}
 		var detail map[string]any

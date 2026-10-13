@@ -61,6 +61,12 @@ type Turn struct {
 	ConversationID string
 	UserText       string
 	AssistantText  string
+	// Untrusted is set when any tool result consumed during the turn was
+	// untrusted (web content, email, MCP output, ...). The assistant's reply
+	// may then echo attacker-controlled text, so model-based extraction is
+	// skipped: only an explicit "remember that ..." in the user's own text
+	// (which is trusted) can create a memory.
+	Untrusted bool
 }
 
 // Extractor proposes and stores memories after a turn using a cheap model
@@ -133,26 +139,39 @@ func (e *Extractor) Extract(ctx context.Context, t Turn) ([]Memory, error) {
 //
 // A failed model call is returned as an error; unparseable output is logged
 // at debug level and treated as "no proposals".
+//
+// When t.Untrusted is set the model is not called at all (see Turn): the
+// only possible proposal is the explicit note from the user's text.
 func (e *Extractor) Propose(ctx context.Context, t Turn, existing []Memory) ([]Proposal, error) {
-	req := llm.Request{
-		Model:     e.model,
-		System:    ExtractPrompt,
-		Messages:  []llm.Message{llm.NewTextMessage(llm.RoleUser, extractInput(t, existing))},
-		MaxTokens: 1024,
+	var (
+		raw     []Proposal
+		callErr error
+	)
+	if t.Untrusted {
+		e.log.DebugContext(ctx, "memory: skipping model extraction; turn consumed untrusted tool output", "user_id", t.UserID)
+	} else {
+		req := llm.Request{
+			Model:     e.model,
+			System:    ExtractPrompt,
+			Messages:  []llm.Message{llm.NewTextMessage(llm.RoleUser, extractInput(t, existing))},
+			MaxTokens: 1024,
+		}
+		var resp llm.Response
+		resp, callErr = e.prov.Complete(ctx, req)
+		e.record(t.UserID, req, resp, callErr)
+		if callErr == nil {
+			if raw, callErr = parseProposals(resp.Message.Text()); callErr != nil {
+				e.log.DebugContext(ctx, "memory: ignoring unparseable extraction output", "user_id", t.UserID, "err", callErr)
+				raw = nil
+			}
+		}
 	}
-	resp, callErr := e.prov.Complete(ctx, req)
-	e.record(t.UserID, req, resp, callErr)
-
-	var raw []Proposal
-	if callErr != nil {
+	if callErr != nil && !errors.Is(callErr, errUnparseable) {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("memory: extract: %w", callErr)
 		}
 		// Still honour an explicit "remember that ..." below.
 		e.log.DebugContext(ctx, "memory: extraction model call failed", "user_id", t.UserID, "err", callErr)
-	} else if raw, callErr = parseProposals(resp.Message.Text()); callErr != nil {
-		e.log.DebugContext(ctx, "memory: ignoring unparseable extraction output", "user_id", t.UserID, "err", callErr)
-		raw = nil
 	}
 
 	seen := map[string]bool{}
