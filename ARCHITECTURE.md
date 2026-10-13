@@ -293,6 +293,40 @@ routines:
 - Routines use the **same** policy as interactive sessions. "Proactive" never
   means "more permissive".
 
+How it is built (`internal/routines`):
+
+- **Cron** is a hand-written 5-field parser (`*`, lists, ranges, steps, month
+  and weekday names, `@hourly`/`@daily`/`@weekly`/`@monthly`/`@yearly`),
+  evaluated on the wall clock of `daemon.timezone` (default: system zone).
+  A time skipped by a DST spring-forward fires once at the end of the gap; a
+  time repeated by fall-back fires once.
+- **Scheduler.** Every 30 s it reads enabled cron routines with
+  `next_run_at <= now` and *claims* each one: a single transaction advances
+  `next_run_at` to the first activation after now (only if it still holds
+  the value that was read) and inserts the `routine_runs` row. Because the
+  claim is committed before the run starts, a crash can at worst lose one
+  run, never repeat one; runs left `running` by a dead process are marked
+  `canceled` at startup. A routine that was due while the daemon was down
+  runs **once** on startup (the log reports how many activations were
+  missed). Runs are limited to 2 at a time across users; a routine whose
+  previous run is still going is not started again.
+- **Runner.** Each run creates a conversation `routine: <name>` owned by the
+  routine's user and calls the agent with the routine's prompt (and optional
+  model override). Tool calls go through the dispatcher like any other turn,
+  so an `ask` creates an approval delivered over SSE; the run shows
+  `waiting_approval` until it is answered or times out. The final reply is
+  stored on the run and a `routine_finished` event goes to the owner.
+- **Events.** `hooks.Registry.EmitEvent` fans an event out to `on_event`
+  handlers; the scheduler's handler starts every enabled routine subscribed
+  to that name for the event's user (or for all users when the event has no
+  user). The payload is appended to the prompt as an `<untrusted-data>` block,
+  and memory extraction is skipped for such runs.
+- **Delivery.** `web` and `cli` both mean "stored and visible via the API" in
+  v1; the field is kept for future chat-app deliveries.
+- **Config seeding.** `routines:` in `bosun.yaml` is seeded at startup by
+  (owner, name), creating missing routines only; edits made through the
+  API/CLI are never overwritten. Owners that don't exist yet are skipped.
+
 ## Memory
 
 Per-user, local, inspectable.
