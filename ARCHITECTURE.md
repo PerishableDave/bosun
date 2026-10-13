@@ -191,6 +191,25 @@ Rules that keep in-process plugins honest:
 - Integrations receive credentials through `CredentialSource`, scoped to the
   current user, and never read the vault directly.
 
+### First-party integrations
+
+- `calendar` (`ScopePerUser`): CalDAV (RFC 4791) + iCalendar (RFC 5545),
+  hand-written on the stdlib. Discovery via `/.well-known/caldav`,
+  `current-user-principal` and `calendar-home-set`; reads with a
+  `calendar-query` REPORT (time-range filter, `calendar-multiget` when the
+  server omits data); writes with PUT/DELETE guarded by `If-Match` ETags
+  (`If-None-Match: *` on create), so a concurrent edit surfaces as a conflict
+  instead of being overwritten. Recurrences (common RRULE shapes, RDATE,
+  EXDATE, RECURRENCE-ID overrides) are expanded locally in the event's own
+  zone; free/busy is computed locally from events. The account comes from the
+  vault: `oauth2:google` (bearer token, Google's CalDAV endpoint, needs the full
+  calendar scope) or `password` (Basic auth; `url`/`user` fields). Credentials
+  go only over https (http only to loopback) and only to the configured
+  host's site, even across redirects or principal hrefs on other hosts.
+  Discovered calendars are cached per user (5 min, keyed by a credential
+  fingerprint). Times default to `daemon.timezone`; results are `Untrusted`
+  because invitations carry other people's text.
+
 ### MCP bridge
 
 `internal/integrations/mcp` is an `Integration` whose tools are discovered at
