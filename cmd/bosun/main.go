@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&g.server, "server", "", "daemon base URL (default derived from config daemon.listen)")
 	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g),
 		newToolsCmd(g), newPolicyCmd(g), newMemoryCmd(g))
+	root.AddCommand(newRoutinesCmd(g))
 	return root
 }
 
