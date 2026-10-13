@@ -1,0 +1,424 @@
+# Bosun — Architecture
+
+Companion to [GOALS.md](GOALS.md). This describes how Bosun is built; GOALS.md
+describes why.
+
+## Decisions this architecture is built on
+
+| Decision | Choice | Consequence |
+|---|---|---|
+| Language | **Go** | Single static binary, easy service install, embedded web UI |
+| Integration isolation | **In-process plugins** | Integrations are Go packages compiled into the binary; permissions are enforced at the dispatcher, not a process boundary |
+| Third-party extensibility | **MCP bridge** | External MCP servers attach as ordinary integrations without a rebuild |
+| Runtime | **Daemon + thin clients** | `bosund` owns agent, memory, schedules; `bosun` CLI and web UI talk to it over HTTP |
+| Proactivity | **Opt-in routines** | Scheduled/event-driven agent runs, same permission model as interactive use |
+| Audience | **Household / small team** | Users, roles, sessions, per-user memory, permissions and credentials |
+
+## System overview
+
+```mermaid
+flowchart LR
+    subgraph clients [Clients]
+        CLI[bosun CLI]
+        Web[Web UI]
+    end
+
+    subgraph daemon [bosund]
+        API[API / Auth]
+        Agent[Agent loop]
+        Policy[Policy + Approvals]
+        Hooks[Hooks]
+        Disp[Tool dispatcher]
+        Routines[Routine scheduler]
+        Memory[Memory]
+        Audit[Audit log]
+        Store[(SQLite)]
+    end
+
+    subgraph integrations [Integrations]
+        Cal[calendar]
+        Mail[email]
+        Notes[notes]
+        Search[web search]
+        MCP[mcp bridge]
+    end
+
+    subgraph llm [LLM providers]
+        Anth[Anthropic]
+        OAI[OpenAI-compatible]
+        Oll[Ollama]
+    end
+
+    CLI --> API
+    Web --> API
+    API --> Agent
+    Routines --> Agent
+    Agent --> llm
+    Agent --> Disp
+    Disp --> Hooks
+    Disp --> Policy
+    Disp --> integrations
+    Disp --> Audit
+    Agent --> Memory
+    Memory --> Store
+    Policy --> Store
+    Audit --> Store
+    API --> Store
+    MCP -.stdio/HTTP.-> Ext[External MCP servers]
+```
+
+Two binaries: **`bosund`** (the daemon, does all the work) and **`bosun`** (the
+CLI, a thin client). The web UI is static assets embedded in `bosund` with
+`embed.FS`.
+
+## Repository layout
+
+```
+cmd/
+  bosund/            daemon entrypoint
+  bosun/             CLI entrypoint
+internal/
+  agent/             agent loop, session state, context assembly
+  llm/               Provider interface + implementations
+    anthropic/
+    openai/          any OpenAI-compatible endpoint
+    ollama/
+  integration/       Integration/Tool interfaces, registry, dispatcher
+  integrations/      first-party integrations (one package each)
+    calendar/
+    email/
+    notes/
+    websearch/
+    mcp/             bridge: external MCP servers -> Integration
+  policy/            capability rules, risk defaults, decision engine
+  approval/          pending approvals, delivery to clients, timeouts
+  hooks/             hook registry and runner
+  routines/          cron + event triggers, routine runner
+  memory/            per-user memory store and retrieval
+  auth/              users, roles, sessions, credential vault
+  api/               HTTP + SSE handlers, request auth
+  config/            bosun.yaml loading, validation, defaults
+  store/             SQLite schema, migrations, queries
+  audit/             append-only action log
+web/                 web UI source; built output embedded into bosund
+docs/
+```
+
+Everything under `internal/` is private to the module. If a stable public API
+for out-of-tree integrations is wanted later, the `integration` package is the
+one to promote to `pkg/`.
+
+## Core interfaces
+
+These are the contracts every pluggable part conforms to. They are intentionally
+small.
+
+### LLM provider
+
+```go
+package llm
+
+type Provider interface {
+    Name() string
+    Complete(ctx context.Context, req Request) (Response, error)
+    Stream(ctx context.Context, req Request) (<-chan Event, error)
+}
+
+type Request struct {
+    Model    string
+    System   string
+    Messages []Message
+    Tools    []ToolSpec   // provider-neutral tool definitions
+    MaxTokens int
+}
+```
+
+Providers translate between Bosun's neutral message/tool format and their own
+API. Model selection is config: `llm.default` plus optional per-routine and
+per-user overrides. Adding a provider is one package implementing `Provider`
+plus a line in the registry.
+
+### Integration and tool
+
+```go
+package integration
+
+type Integration interface {
+    Manifest() Manifest
+    Init(ctx context.Context, cfg Config, creds CredentialSource) error
+    Tools() []Tool
+    Close() error
+}
+
+type Manifest struct {
+    Name         string       // "email"
+    Version      string
+    Capabilities []Capability // every capability any tool may use
+    ConfigSchema json.RawMessage
+    CredentialKinds []string  // "oauth2:google", "apikey", ...
+}
+
+type Tool struct {
+    Name        string          // "email.send"
+    Description string
+    Capability  Capability      // "email.send"
+    Risk        Risk            // Read | Write | Destructive
+    InputSchema json.RawMessage
+    Handler     func(ctx context.Context, in json.RawMessage) (Result, error)
+}
+
+type Result struct {
+    Content   string   // text handed to the model
+    Untrusted bool     // true for anything originating outside Bosun
+    Data      any      // structured result for the UI / hooks
+}
+```
+
+Rules that keep in-process plugins honest:
+
+- A tool's `Capability` must appear in its integration's `Manifest`. The
+  registry rejects integrations that violate this at startup.
+- The dispatcher is the **only** path from the model to a `Handler`. Integrations
+  never call each other.
+- A `go vet`-style lint (via `golangci-lint` custom rule or `depguard`) forbids
+  `internal/integrations/**` from importing `os/exec`, `internal/store`,
+  `internal/auth`, or other integrations. This is the compile-time substitute
+  for process isolation.
+- Integrations receive credentials through `CredentialSource`, scoped to the
+  current user, and never read the vault directly.
+
+### MCP bridge
+
+`internal/integrations/mcp` is an `Integration` whose tools are discovered at
+runtime from a configured external MCP server (stdio or HTTP). Each remote tool
+becomes a `Tool` with:
+
+- capability `mcp.<server>.<tool>` (user must grant it like any other),
+- risk defaulting to **Write** unless the server annotates it read-only,
+- results always marked `Untrusted: true`.
+
+This is how users extend Bosun without rebuilding it. It is also where the
+in-process decision costs the least, because the external server is already a
+separate process.
+
+## Request lifecycle
+
+An interactive message and a routine run take the same path from step 3 on.
+
+1. **Auth.** The API authenticates the session token and resolves the `User`.
+2. **Session.** The agent loads or creates a conversation for that user and
+   assembles context: system prompt, relevant memory, conversation history.
+3. **Model call.** The provider returns text and/or tool calls.
+4. **For each tool call:**
+   1. `hooks.PreToolCall` runs (may rewrite args, cancel, or annotate).
+   2. `policy.Decide(user, capability, risk, args)` returns `allow`, `ask`, or
+      `deny`.
+   3. On `ask`, an `Approval` is created and pushed to the user's clients over
+      SSE. The tool call blocks until approved, denied, or timed out.
+   4. The dispatcher invokes the `Handler`.
+   5. `hooks.PostToolCall` runs.
+   6. The call, decision, approver, and result summary are appended to the
+      **audit log** regardless of outcome.
+5. Results return to the model; loop to 3 until the model produces a final
+   reply or hits the step budget.
+6. The reply streams to clients; memory extraction runs asynchronously.
+
+## Policy and approvals
+
+Policy is evaluated per **user × capability**.
+
+```yaml
+# defaults by risk level, applied when no explicit rule matches
+policy:
+  defaults:
+    read: allow
+    write: ask
+    destructive: ask
+
+# per-user rules live in the DB, editable from UI/CLI; shown here as the
+# equivalent config form for an admin-seeded user
+users:
+  dave:
+    rules:
+      calendar.read: allow
+      calendar.write: allow
+      email.send: ask
+      email.delete: deny
+```
+
+- Explicit rule > risk default > `deny`. Unknown capabilities are denied.
+- Rules may carry a **condition** on arguments later (e.g. `email.send` allowed
+  only to `@family.example`). v1 ships the enum; the schema leaves room for
+  conditions.
+- Approvals have a timeout (default 15 min). Timed-out approvals are denied and
+  the model is told so.
+- A user can approve from any of their clients; the first answer wins.
+- Routine runs that hit `ask` pause and notify the user; they resume when
+  answered or are abandoned on timeout.
+
+## Hooks
+
+Hooks are Go functions registered at startup, plus an optional **script hook**
+type that runs a user-supplied executable with JSON on stdin. Script hooks are
+the one deliberate exception to "no shell", exist only because users asked for
+them, are off by default, and are admin-only to configure.
+
+| Hook | Receives | May |
+|---|---|---|
+| `pre_tool_call` | user, tool, args | rewrite args, cancel, add audit note |
+| `post_tool_call` | user, tool, args, result | rewrite result, add audit note |
+| `on_schedule` | routine, tick | (this *is* a routine trigger) |
+| `on_event` | integration event | start a routine |
+| `pre_model_call` | assembled request | redact, rewrite system prompt |
+| `on_approval` | approval, decision | notify external channel |
+
+## Routines
+
+A routine is a named prompt plus a trigger, owned by a user and run as that user.
+
+```yaml
+routines:
+  - name: morning-brief
+    owner: dave
+    trigger: { cron: "0 7 * * 1-5" }
+    prompt: "Summarize today's calendar and flag any unread email that looks urgent."
+    model: claude-haiku-5-5     # optional override
+    deliver: [web, cli]         # where the result is posted
+```
+
+- Triggers: `cron`, or `event` (an integration emits an event such as
+  `email.received`, which `on_event` routes to routines subscribed to it).
+- The scheduler persists next-run times in SQLite so restarts don't skip or
+  double-run.
+- Routines use the **same** policy as interactive sessions. "Proactive" never
+  means "more permissive".
+
+## Memory
+
+Per-user, local, inspectable.
+
+- Storage: SQLite tables `memories(user_id, kind, content, source, created_at)`
+  with an FTS5 index. Optional embedding column populated through the
+  configured provider; retrieval falls back to FTS when embeddings are off.
+- Kinds: `fact` (about the user), `preference`, `summary` (of past
+  conversations), `note` (explicit "remember this").
+- Extraction: after each turn, a cheap model pass proposes memories; they are
+  stored with `source` pointing at the conversation.
+- Control: `bosun memory list|show|edit|forget` and the equivalent UI page.
+  Users see only their own memory; admins cannot read other users' memory.
+
+## Users, auth, and credentials
+
+- Roles: `admin` (manage users, integrations, daemon config) and `member`.
+- Auth: local username + password (argon2id). Session tokens are bearer tokens
+  stored hashed; the CLI keeps its token in the OS keychain where available,
+  else a mode-0600 file.
+- Transport: `bosund` listens on `127.0.0.1` by default. For household use the
+  admin enables LAN binding, which **requires** TLS (self-signed cert generated
+  by `bosun setup`, or user-supplied).
+- **Credential vault:** integration secrets (OAuth tokens, API keys) are stored
+  per user, encrypted with a daemon master key held in the OS keychain (macOS
+  Keychain, Secret Service on Linux) or a mode-0600 key file as fallback.
+  Integrations get a `CredentialSource` scoped to the requesting user.
+- Integration *configuration* (which integrations are enabled, endpoints) is
+  admin-level; *credentials and permissions* are always per user.
+
+## Configuration
+
+One file, `bosun.yaml`, for daemon-level settings. Per-user settings live in the
+DB and are edited through the UI/CLI, never by hand-editing files.
+
+```yaml
+daemon:
+  listen: 127.0.0.1:7777
+  data_dir: ~/.bosun
+  tls: { enabled: false }
+
+llm:
+  default: anthropic/claude-sonnet-5-5
+  providers:
+    anthropic: { api_key_env: ANTHROPIC_API_KEY }
+    ollama:    { base_url: http://localhost:11434 }
+
+integrations:
+  calendar:  { enabled: true, backend: caldav }
+  email:     { enabled: true, backend: imap }
+  notes:     { enabled: true, dir: ~/Notes }
+  websearch: { enabled: true, backend: searxng, base_url: http://localhost:8080 }
+  mcp:
+    servers:
+      - name: github
+        command: ["npx", "-y", "@modelcontextprotocol/server-github"]
+
+policy:
+  defaults: { read: allow, write: ask, destructive: ask }
+  approval_timeout: 15m
+
+hooks:
+  script_hooks: { enabled: false }
+
+telemetry: { enabled: false }
+```
+
+`bosun setup` writes this file interactively, creates the first admin user,
+generates keys, and offers to install a launchd/systemd unit.
+
+## Storage
+
+A single SQLite database at `$data_dir/bosun.db` (WAL mode), migrations
+embedded in the binary. Tables, roughly:
+
+`users`, `sessions`, `credentials`, `policy_rules`, `conversations`, `messages`,
+`memories`, `routines`, `routine_runs`, `approvals`, `audit_log`, `hooks`.
+
+SQLite is enough for a household. The `store` package is the only thing that
+knows SQL, so a Postgres backend is a contained change if it's ever needed.
+
+## Security model
+
+What Bosun trusts and doesn't.
+
+- **Trust boundary:** the daemon process. Anyone with a valid session token for
+  a user *is* that user. Anyone with filesystem access to `data_dir` and the
+  master key can read everything, so `bosun setup` sets restrictive permissions
+  and the docs say so plainly.
+- **Prompt injection:** every tool result flagged `Untrusted` is wrapped in a
+  delimited data block, the system prompt instructs the model that such blocks
+  are never instructions, and `pre_tool_call` hooks can inspect for tool calls
+  whose arguments quote untrusted content verbatim. This is mitigation, not a
+  guarantee; the approval gate on write/destructive actions is the real
+  backstop.
+- **Capability enforcement:** the dispatcher is the single choke point; tests
+  assert that no `Handler` is reachable without a `policy.Decide` call.
+- **Outbound network:** only LLM providers and enabled integrations make
+  network calls. The audit log records every outbound LLM request (provider,
+  model, token counts; not content unless `audit.log_content: true`).
+- **Supply chain:** first-party integrations are vendored Go; MCP servers are
+  the user's choice and are clearly labelled as third-party in the UI.
+
+## Tradeoffs accepted
+
+- **In-process integrations** give the simplest install and fastest calls at the
+  cost of crash and memory isolation. A panicking integration is recovered by
+  the dispatcher and disabled until restart; it cannot be *prevented* from
+  misbehaving in memory. The lint rules and single-dispatcher design are the
+  mitigation; the MCP bridge is the escape hatch for anything that warrants a
+  process boundary.
+- **SQLite** caps concurrency at "a household", which is the stated audience.
+- **Local password auth** instead of OIDC keeps setup under 10 minutes; OIDC can
+  be added as an `auth` backend later.
+
+## Implementation order
+
+1. `config`, `store`, `auth`, `api` skeleton; `bosun setup` creates an admin and
+   a running empty daemon.
+2. `llm` with the Anthropic and Ollama providers; a chat with no tools works in
+   the CLI.
+3. `integration` registry + dispatcher + `policy` + `audit`; one tool
+   (`websearch`) end to end with approval flow.
+4. `hooks`, then `calendar`, `email`, `notes`.
+5. `memory`.
+6. `routines` + `on_event`.
+7. `mcp` bridge.
+8. Web UI.
+9. Multi-user hardening: TLS, LAN binding, admin pages.
