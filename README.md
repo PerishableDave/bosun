@@ -8,20 +8,68 @@ the how. The HTTP API is documented in [docs/API.md](docs/API.md).
 
 ## Status
 
-Early foundation: config, SQLite store, auth, HTTP API skeleton, and the core
-interfaces (`llm`, `integration`, `policy`, `approval`, `audit`, `hooks`).
-Chat, tools, and approvals are not wired up yet.
+MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
+policy, approvals, an audit log, and an encrypted credential vault. The only
+built-in integration so far is `websearch` (`websearch.fetch` for public web
+pages; `websearch.search` needs a SearXNG instance). Calendar, email, notes,
+memory, routines, the MCP bridge, and the web UI are not built yet.
 
 ## Quick start
 
 Requires Go 1.26+.
 
 ```sh
-make build
-./bin/bosun setup          # writes bosun.yaml, creates data dir and first admin
-./bin/bosund -config bosun.yaml
-./bin/bosun status
-./bin/bosun login
+make build                    # builds bin/bosund and bin/bosun
+./bin/bosun setup             # writes ~/.bosun/bosun.yaml, creates the data dir and the first admin
+```
+
+`bosun setup` prompts for the listen address, data directory, admin username
+and password; `--listen`, `--data-dir` and `--admin` skip those prompts. Use
+`--config <path>` (or `BOSUN_CONFIG`) on every command to keep the config
+elsewhere.
+
+Pick a model in `bosun.yaml`. The default is `anthropic/claude-sonnet-5-5`,
+which reads the key from `ANTHROPIC_API_KEY`; for a local model, set
+`llm.default: ollama/<model>` (Ollama at `http://localhost:11434`). An
+`openai` provider (any OpenAI-compatible endpoint, `base_url` + `api_key_env`)
+is also supported.
+
+```sh
+export ANTHROPIC_API_KEY=...  # if using Anthropic
+./bin/bosund                  # start the daemon (Ctrl-C / SIGTERM to stop)
+```
+
+In another terminal:
+
+```sh
+./bin/bosun login                 # stores a session token in <data_dir>/cli-token
+./bin/bosun tools                 # what the assistant can do, and your policy for each
+./bin/bosun chat "hello"          # one turn; `bosun chat` alone opens a session
+```
+
+### Permissions
+
+Every tool has a capability (e.g. `websearch.fetch`) and a risk level. Unless
+you set a rule, the risk default from `policy.defaults` applies (read: allow,
+write: ask, destructive: ask). "ask" pauses the tool call until you answer;
+`bosun chat` prompts inline, and `bosun approvals list` /
+`bosun approvals <id> approve|deny` work from any terminal.
+
+```sh
+./bin/bosun policy set websearch.fetch ask    # always ask before fetching pages
+./bin/bosun policy list
+./bin/bosun policy unset websearch.fetch      # back to the risk default
+```
+
+### Audit log
+
+Every tool call (with its policy decision and outcome), approval, policy
+change, and model request (provider, model, token counts) is appended to the
+`audit_log` table in `<data_dir>/bosun.db` (SQLite). Message content and tool
+arguments are redacted there unless `audit.log_content: true`.
+
+```sh
+sqlite3 ~/.bosun/bosun.db "select ts, kind, tool, decision, error from audit_log order by id desc limit 20"
 ```
 
 ## Development

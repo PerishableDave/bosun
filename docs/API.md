@@ -4,9 +4,9 @@
 `http://127.0.0.1:7777`. LAN binding requires TLS. The `bosun` CLI and the web
 UI are clients of this API.
 
-Status legend: **implemented** endpoints work today; **contract** endpoints
-currently return `501 Not Implemented` but their request/response shapes below
-are fixed and other components must implement them as written.
+All endpoints below are implemented. An endpoint whose backing component is
+not configured on a given server (only possible when embedding `api.Server`
+without it, never in `bosund`) answers `501 not_implemented`.
 
 ## Conventions
 
@@ -20,7 +20,9 @@ are fixed and other components must implement them as written.
 - **IDs.** Users are integers. Conversations (`conv_…`) and approvals
   (`appr_…`) are opaque strings.
 - **Isolation.** Every resource is scoped to the authenticated user. A
-  resource owned by another user is reported as `404`, never `403`.
+  resource owned by another user is reported as `404`, with one exception:
+  answering another user's approval (`POST /v1/approvals/{id}`) is `403`.
+  Approval IDs are 128-bit random values, so this reveals nothing guessable.
 
 ### Errors
 
@@ -35,10 +37,11 @@ All errors use one envelope:
 | 400 | `bad_request` | Malformed JSON, unknown field, or invalid value |
 | 401 | `unauthorized` | Missing/invalid/expired bearer token |
 | 401 | `invalid_credentials` | Login failed (username or password wrong; deliberately indistinguishable) |
+| 403 | `forbidden` | Answering an approval that belongs to another user |
 | 404 | `not_found` | No such endpoint or resource (or not yours) |
-| 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired |
+| 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired, or a turn already running |
 | 500 | `internal` | Server error (details are logged, never returned) |
-| 501 | `not_implemented` | Contract endpoint not built yet |
+| 501 | `not_implemented` | The endpoint's component is not configured on this server |
 
 ### User object
 
@@ -100,13 +103,14 @@ every 15 s as keep-alives. Events not delivered (client disconnected, or a
 client too slow to keep up) are dropped; clients resynchronise with the REST
 endpoints (e.g. `GET /v1/approvals`) after reconnecting.
 
-On this stream you will typically see `approval_required` and
-`approval_resolved` (see [SSE events](#sse-events)); any event type may be
-published to it.
+Every event of every turn the user runs is published to this stream (each
+payload carries its `conversation_id`), so it is where a second client sees
+`approval_required` / `approval_resolved` for a turn started elsewhere. See
+[SSE events](#sse-events).
 
-### `POST /v1/conversations` (contract)
+### `POST /v1/conversations`
 
-Request (all fields optional):
+Request (all fields optional; `title` is trimmed and cut to 200 bytes):
 
 ```json
 { "title": "Morning planning" }
@@ -115,10 +119,42 @@ Request (all fields optional):
 Response `201`:
 
 ```json
-{ "id": "conv_3f2a…", "title": "Morning planning", "created_at": "2026-10-12T22:00:00Z" }
+{ "id": "conv_3f2a…", "title": "Morning planning", "created_at": "2026-10-12T22:00:00Z", "updated_at": "2026-10-12T22:00:00Z" }
 ```
 
-### `POST /v1/conversations/{id}/messages` (contract, SSE response)
+### `GET /v1/conversations`
+
+The caller's conversations, most recently updated first.
+
+Response `200`:
+
+```json
+{ "conversations": [ { "id": "conv_3f2a…", "title": "Morning planning", "created_at": "…", "updated_at": "…" } ] }
+```
+
+### `GET /v1/conversations/{id}`
+
+One conversation with its full stored history. `content` is the array of
+content blocks exactly as stored (`text`, `tool_use`, `tool_result`);
+`role` is `user`, `assistant`, or `tool`.
+
+Response `200`:
+
+```json
+{
+  "id": "conv_3f2a…", "title": "", "created_at": "…", "updated_at": "…",
+  "messages": [
+    { "role": "user", "content": [ { "type": "text", "text": "What's on example.com?" } ], "created_at": "…" },
+    { "role": "assistant", "content": [ { "type": "tool_use", "id": "toolu_01", "name": "websearch.fetch", "input": { "url": "https://example.com" } } ], "created_at": "…" },
+    { "role": "tool", "content": [ { "type": "tool_result", "tool_use_id": "toolu_01", "content": "<untrusted-data …" } ], "created_at": "…" },
+    { "role": "assistant", "content": [ { "type": "text", "text": "It is a placeholder page." } ], "created_at": "…" }
+  ]
+}
+```
+
+Errors: `404` (no such conversation, or not yours).
+
+### `POST /v1/conversations/{id}/messages` (SSE response)
 
 Sends a user message and streams the agent's turn.
 
@@ -128,10 +164,20 @@ Request:
 { "content": "Summarize today's calendar" }
 ```
 
-`content` is required. Response `200` with `Content-Type: text/event-stream`;
-the body is a sequence of [SSE events](#sse-events): any number of `text`,
+`content` is required and must not be blank. Response `200` with
+`Content-Type: text/event-stream`; the body is the sequence of
+[SSE events](#sse-events) for this conversation only: any number of `text`,
 `tool_call`, `tool_result`, `approval_required`, `approval_resolved`, ending
 with exactly one `done` or `error`, after which the server closes the stream.
+`: ping` comments are sent as keep-alives while the turn waits (e.g. on an
+approval).
+
+The turn is: store the message, call the model (default model from
+`llm.default`) with the conversation history and the registered tools, run
+each tool call through policy/approval/hooks, feed the results back, and
+repeat until the model ends its turn or 20 model calls have been made (then
+the turn ends with `error`). Every message, including tool calls and
+results, is stored in the conversation.
 
 Errors before streaming starts use normal JSON errors: `400`, `401`,
 `404` (conversation not found or not yours), `409` (a turn is already running
@@ -140,7 +186,7 @@ in this conversation).
 If the client disconnects mid-turn the turn is canceled; any pending approval
 for it is marked `canceled`.
 
-### `GET /v1/approvals` (contract)
+### `GET /v1/approvals`
 
 Lists the caller's pending, unexpired approvals, oldest first.
 
@@ -151,6 +197,7 @@ Response `200`:
   "approvals": [
     {
       "id": "appr_9c1e…",
+      "user_id": 1,
       "conversation_id": "conv_3f2a…",
       "tool_call_id": "toolu_01",
       "tool": "email.send",
@@ -166,9 +213,10 @@ Response `200`:
 ```
 
 `risk` is `read` | `write` | `destructive`. `status` is `pending` |
-`approved` | `denied` | `expired` | `canceled`.
+`approved` | `denied` | `expired` | `canceled`. `conversation_id` and
+`tool_call_id` are omitted when empty.
 
-### `POST /v1/approvals/{id}` (contract)
+### `POST /v1/approvals/{id}`
 
 Request:
 
@@ -180,10 +228,75 @@ Request:
 
 Response `200`: the updated approval object (as above, with `status`,
 `resolved_at`, and `resolved_by` set). An `approval_resolved` event is
-published to all of the user's clients.
+published to all of the user's clients, and the waiting tool call proceeds
+(approve) or is reported to the model as denied (deny).
 
-Errors: `404` (no such approval, or not yours), `409 conflict` (already
-resolved by another client, expired, or canceled).
+Errors: `403 forbidden` (the approval belongs to another user), `404` (no
+such approval), `409 conflict` (already resolved by another client, expired,
+or canceled).
+
+### `GET /v1/policy`
+
+The caller's effective permission configuration: the per-risk defaults (from
+`policy.defaults` in `bosun.yaml`) and the caller's explicit rules, ordered by
+capability. An explicit rule beats the risk default; capabilities no
+registered tool declares are always denied.
+
+Response `200`:
+
+```json
+{
+  "defaults": { "read": "allow", "write": "ask", "destructive": "ask" },
+  "rules": [ { "capability": "websearch.fetch", "decision": "ask", "updated_at": "2026-10-12T22:00:00Z" } ]
+}
+```
+
+### `PUT /v1/policy/{capability}`
+
+Creates or replaces the caller's rule for one capability. Takes effect on the
+next tool call. Recorded in the audit log (`kind = config`).
+
+Request:
+
+```json
+{ "decision": "allow" }
+```
+
+`decision` is `"allow"`, `"ask"`, or `"deny"`.
+
+Response `200`: the rule (`{"capability": …, "decision": …, "updated_at": …}`).
+
+Errors: `400` (bad decision, malformed capability, or a capability that no
+registered tool declares; see `GET /v1/tools`).
+
+### `DELETE /v1/policy/{capability}`
+
+Removes the caller's rule so the risk default applies again. Recorded in the
+audit log. Response `204 No Content`.
+
+Errors: `404` (you have no rule for that capability).
+
+### `GET /v1/tools`
+
+The tools the agent can call, sorted by name, with the decision policy would
+make for the caller right now.
+
+Response `200`:
+
+```json
+{
+  "tools": [
+    {
+      "name": "websearch.fetch",
+      "integration": "websearch",
+      "description": "Fetch a public web page over http(s) and return its readable text (truncated). …",
+      "capability": "websearch.fetch",
+      "risk": "read",
+      "decision": "allow"
+    }
+  ]
+}
+```
 
 ---
 
@@ -197,21 +310,28 @@ data: <single-line JSON>
 
 ```
 
+Every `data` object also carries `"conversation_id": "conv_…"` (omitted only
+for events not tied to a conversation). It is left out of the table for
+brevity.
+
 | `event` | `data` | Meaning |
 |---|---|---|
 | `text` | `{"delta": "Here is"}` | A chunk of assistant text; concatenate deltas |
 | `tool_call` | `{"id": "toolu_01", "name": "calendar.list", "args": {…}}` | The model called a tool |
 | `tool_result` | `{"id": "toolu_01", "summary": "3 events today"}` | A tool call finished (summary only; full results stay server-side) |
 | `approval_required` | `{"approval_id": "appr_…", "tool": "email.send", "args": {…}, "risk": "write"}` | A tool call is blocked waiting for the user; answer with `POST /v1/approvals/{id}` |
-| `approval_resolved` | `{"approval_id": "appr_…", "decision": "approve"}` | An approval was answered; `decision` is `approve`, `deny`, or `expired` |
+| `approval_resolved` | `{"approval_id": "appr_…", "decision": "approve"}` | An approval was answered; `decision` is `approve`, `deny`, `expired`, or `canceled` |
 | `done` | `{}` | The turn finished successfully |
-| `error` | `{"message": "model request failed"}` | The turn failed; terminal |
+| `error` | `{"message": "model request failed: …"}` | The turn failed; terminal |
 
-`tool_call.id` and `tool_result.id` match each other. A denied or timed-out
-tool call still produces a `tool_result` whose summary says so.
+`tool_call.id` and `tool_result.id` match each other. A denied, timed-out, or
+failed tool call still produces a `tool_result`, whose summary starts with
+`error: ` and says why; the model receives the same outcome as an error tool
+result and the turn continues.
 
 Go types for every payload live in `internal/api/events`
 (`TextData`, `ToolCallData`, `ToolResultData`, `ApprovalRequiredData`,
-`ApprovalResolvedData`, `DoneData`, `ErrorData`). Server code publishes with
+`ApprovalResolvedData`, `DoneData`, `ErrorData`); `events.ConversationOf`
+returns an event's conversation. Server code publishes with
 `events.Bus.Publish(userID, events.Event{Type: events.TypeText, Data: …})` and
 writes per-request streams with `events.NewSSEWriter`.

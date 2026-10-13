@@ -59,6 +59,10 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 		fmt.Fprintf(out, "Using existing config %s (pass --force to overwrite).\n", g.configPath)
 	} else {
 		cfg := config.Default()
+		// websearch.fetch (read risk, SSRF-guarded) works without any backend;
+		// websearch.search needs base_url pointing at a SearXNG instance.
+		enabled := true
+		cfg.Integrations["websearch"] = config.IntegrationConfig{Enabled: &enabled}
 		var err error
 		if cfg.Daemon.Listen, err = answer(p, "Listen address", o.listen, o.listenSet); err != nil {
 			return err
@@ -118,7 +122,7 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 	fmt.Fprintln(out, "Next steps:")
 	fmt.Fprintf(out, "  bosund --config %s\n", g.configPath)
 	fmt.Fprintln(out, "  bosun login")
-	fmt.Fprintln(out, "  bosun status")
+	fmt.Fprintln(out, "  bosun chat \"hello\"")
 	return nil
 }
 

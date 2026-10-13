@@ -50,6 +50,10 @@ func TestSetupLoginStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if ic, ok := cfg.Integrations["websearch"]; !ok || !ic.IsEnabled() {
+		t.Errorf("setup should enable websearch: %+v", cfg.Integrations)
+	}
+
 	// Re-running setup is idempotent.
 	if out, err := runCLI(t, "", "--config", cfgPath, "setup"); err != nil || !strings.Contains(out, "Users already exist") {
 		t.Fatalf("second setup: %v\n%s", err, out)

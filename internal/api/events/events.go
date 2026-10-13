@@ -27,41 +27,75 @@ type Event struct {
 }
 
 // Payloads for each event type.
+//
+// Every payload carries the conversation it belongs to (omitted when there is
+// none), so a stream for one turn can filter the user's bus down to that
+// conversation; see ConversationOf.
 type (
 	// TextData is a streamed chunk of assistant text.
 	TextData struct {
-		Delta string `json:"delta"`
+		Delta          string `json:"delta"`
+		ConversationID string `json:"conversation_id,omitempty"`
 	}
 	// ToolCallData announces a tool call the model made.
 	ToolCallData struct {
-		ID   string          `json:"id"`
-		Name string          `json:"name"`
-		Args json.RawMessage `json:"args"`
+		ID             string          `json:"id"`
+		Name           string          `json:"name"`
+		Args           json.RawMessage `json:"args"`
+		ConversationID string          `json:"conversation_id,omitempty"`
 	}
 	// ToolResultData summarises a tool call's outcome.
 	ToolResultData struct {
-		ID      string `json:"id"`
-		Summary string `json:"summary"`
+		ID             string `json:"id"`
+		Summary        string `json:"summary"`
+		ConversationID string `json:"conversation_id,omitempty"`
 	}
 	// ApprovalRequiredData asks the user to approve or deny a tool call.
 	ApprovalRequiredData struct {
-		ApprovalID string          `json:"approval_id"`
-		Tool       string          `json:"tool"`
-		Args       json.RawMessage `json:"args"`
-		Risk       string          `json:"risk"`
+		ApprovalID     string          `json:"approval_id"`
+		Tool           string          `json:"tool"`
+		Args           json.RawMessage `json:"args"`
+		Risk           string          `json:"risk"`
+		ConversationID string          `json:"conversation_id,omitempty"`
 	}
 	// ApprovalResolvedData reports an approval's outcome to all clients.
 	ApprovalResolvedData struct {
-		ApprovalID string `json:"approval_id"`
-		Decision   string `json:"decision"` // "approve" | "deny" | "expired"
+		ApprovalID     string `json:"approval_id"`
+		Decision       string `json:"decision"` // "approve" | "deny" | "expired" | "canceled"
+		ConversationID string `json:"conversation_id,omitempty"`
 	}
 	// DoneData ends a message stream.
-	DoneData struct{}
+	DoneData struct {
+		ConversationID string `json:"conversation_id,omitempty"`
+	}
 	// ErrorData reports a failure.
 	ErrorData struct {
-		Message string `json:"message"`
+		Message        string `json:"message"`
+		ConversationID string `json:"conversation_id,omitempty"`
 	}
 )
+
+// ConversationOf returns the conversation ID carried by ev's payload, or ""
+// if it has none (or the payload is not one of this package's types).
+func ConversationOf(ev Event) string {
+	switch d := ev.Data.(type) {
+	case TextData:
+		return d.ConversationID
+	case ToolCallData:
+		return d.ConversationID
+	case ToolResultData:
+		return d.ConversationID
+	case ApprovalRequiredData:
+		return d.ConversationID
+	case ApprovalResolvedData:
+		return d.ConversationID
+	case DoneData:
+		return d.ConversationID
+	case ErrorData:
+		return d.ConversationID
+	}
+	return ""
+}
 
 // Publisher is the interface other packages depend on to notify a user's
 // connected clients.

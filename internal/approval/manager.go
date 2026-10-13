@@ -122,7 +122,7 @@ func (m *StoreManager) Request(ctx context.Context, p Params) (*Approval, error)
 	out := fromStore(a)
 	m.record(ctx, out, "ask", 0, "approval requested")
 	m.publish(out.UserID, events.Event{Type: events.TypeApprovalRequired, Data: events.ApprovalRequiredData{
-		ApprovalID: out.ID, Tool: out.Tool, Args: out.Args, Risk: string(out.Risk),
+		ApprovalID: out.ID, Tool: out.Tool, Args: out.Args, Risk: string(out.Risk), ConversationID: out.ConversationID,
 	}})
 	return out, nil
 }
@@ -231,7 +231,7 @@ func (m *StoreManager) cancel(id string, cause error) error {
 		out := fromStore(a)
 		m.record(ctx, out, DecisionCanceled, 0, "waiting run went away")
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
-			Data: events.ApprovalResolvedData{ApprovalID: id, Decision: DecisionCanceled}})
+			Data: events.ApprovalResolvedData{ApprovalID: id, Decision: DecisionCanceled, ConversationID: out.ConversationID}})
 		m.wake(id)
 	} else if !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
 		m.log.Error("approval: cancel failed", "approval_id", id, "err", err)
@@ -282,7 +282,7 @@ func (m *StoreManager) Resolve(ctx context.Context, id string, userID int64, d D
 	out := fromStore(a)
 	m.record(ctx, out, string(d), userID, "")
 	m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
-		Data: events.ApprovalResolvedData{ApprovalID: id, Decision: string(d)}})
+		Data: events.ApprovalResolvedData{ApprovalID: id, Decision: string(d), ConversationID: out.ConversationID}})
 	m.wake(id)
 	return nil
 }
@@ -312,7 +312,7 @@ func (m *StoreManager) ExpireStale(ctx context.Context) (int, error) {
 		out := fromStore(a)
 		m.record(ctx, out, DecisionExpired, 0, "approval timed out")
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
-			Data: events.ApprovalResolvedData{ApprovalID: out.ID, Decision: DecisionExpired}})
+			Data: events.ApprovalResolvedData{ApprovalID: out.ID, Decision: DecisionExpired, ConversationID: out.ConversationID}})
 		m.wake(out.ID)
 	}
 	return len(as), nil

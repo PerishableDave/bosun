@@ -11,10 +11,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dperedo/bosun/internal/api/events"
+	"github.com/dperedo/bosun/internal/audit"
 	"github.com/dperedo/bosun/internal/auth"
+	"github.com/dperedo/bosun/internal/integration"
+	"github.com/dperedo/bosun/internal/policy"
 )
 
 // Authenticator is the subset of *auth.Service the API needs.
@@ -24,7 +28,9 @@ type Authenticator interface {
 	Logout(ctx context.Context, token string) error
 }
 
-// Options configure a Server.
+// Options configure a Server. Auth and Bus are required; the remaining
+// dependencies are optional, and the endpoints that need a missing one answer
+// 501 not_implemented.
 type Options struct {
 	Auth    Authenticator
 	Bus     *events.Bus
@@ -32,6 +38,21 @@ type Options struct {
 	Version string
 	// Heartbeat is the SSE keep-alive interval (default 15s).
 	Heartbeat time.Duration
+
+	// Conversations persists conversations (usually *store.Store).
+	Conversations ConversationStore
+	// Agent runs a turn (usually *agent.Agent).
+	Agent Runner
+	// Approvals answers and lists approvals (usually *approval.StoreManager).
+	Approvals Approvals
+	// Policy manages per-user rules (usually *policy.StoreEngine).
+	Policy PolicyRules
+	// PolicyDefaults are the per-risk defaults shown by GET /v1/policy.
+	PolicyDefaults policy.Defaults
+	// Tools is the registry of tools the agent can call.
+	Tools *integration.Registry
+	// Audit receives config entries for policy changes. Optional.
+	Audit audit.Logger
 }
 
 // Server holds API dependencies.
@@ -41,6 +62,17 @@ type Server struct {
 	log       *slog.Logger
 	version   string
 	heartbeat time.Duration
+
+	convs     ConversationStore
+	agent     Runner
+	approvals Approvals
+	policy    PolicyRules
+	defaults  policy.Defaults
+	tools     *integration.Registry
+	audit     audit.Logger
+
+	turnsMu sync.Mutex
+	turns   map[string]bool // conversations with a turn in progress
 }
 
 // New returns a Server. Auth and Bus are required.
@@ -48,7 +80,9 @@ func New(o Options) (*Server, error) {
 	if o.Auth == nil || o.Bus == nil {
 		return nil, errors.New("api: Auth and Bus are required")
 	}
-	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat}
+	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat,
+		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
+		tools: o.Tools, audit: o.Audit, turns: map[string]bool{}}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -75,11 +109,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/me", authed(s.handleMe))
 	mux.Handle("GET /v1/events", authed(s.handleEvents))
 
-	// Contract stubs (501) implemented by the agent/approval work.
 	mux.Handle("POST /v1/conversations", authed(s.handleCreateConversation))
+	mux.Handle("GET /v1/conversations", authed(s.handleListConversations))
+	mux.Handle("GET /v1/conversations/{id}", authed(s.handleGetConversation))
 	mux.Handle("POST /v1/conversations/{id}/messages", authed(s.handlePostMessage))
 	mux.Handle("GET /v1/approvals", authed(s.handleListApprovals))
 	mux.Handle("POST /v1/approvals/{id}", authed(s.handleResolveApproval))
+	mux.Handle("GET /v1/policy", authed(s.handleGetPolicy))
+	mux.Handle("PUT /v1/policy/{capability}", authed(s.handleSetPolicyRule))
+	mux.Handle("DELETE /v1/policy/{capability}", authed(s.handleDeletePolicyRule))
+	mux.Handle("GET /v1/tools", authed(s.handleListTools))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")

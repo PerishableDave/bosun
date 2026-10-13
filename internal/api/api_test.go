@@ -149,7 +149,9 @@ func TestLoginAndMe(t *testing.T) {
 	}
 }
 
-func TestStubs(t *testing.T) {
+// TestEndpointsWithoutDeps: a server built with only Auth and Bus answers 501
+// on the endpoints whose dependencies are missing, after validating input.
+func TestEndpointsWithoutDeps(t *testing.T) {
 	e := setup(t)
 	tok := e.login(t)
 	cases := []struct {
@@ -169,7 +171,7 @@ func TestStubs(t *testing.T) {
 			t.Errorf("%s %s = %d, want %d", c.method, c.path, resp.StatusCode, c.want)
 		}
 	}
-	// Stubs still require auth.
+	// They still require auth.
 	if resp := e.do(t, "GET", "/v1/approvals", "", ""); resp.StatusCode != 401 {
 		t.Errorf("unauthenticated stub = %d", resp.StatusCode)
 	}

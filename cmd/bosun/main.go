@@ -37,7 +37,8 @@ func newRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&g.configPath, "config", config.DefaultPath(), "path to bosun.yaml (env BOSUN_CONFIG)")
 	root.PersistentFlags().StringVar(&g.server, "server", "", "daemon base URL (default derived from config daemon.listen)")
-	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g))
+	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g),
+		newToolsCmd(g), newPolicyCmd(g))
 	return root
 }
 

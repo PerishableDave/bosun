@@ -4,20 +4,15 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/auth"
 	"github.com/dperedo/bosun/internal/config"
 	"github.com/dperedo/bosun/internal/store"
 )
@@ -56,78 +51,16 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := ensureDataDir(cfg.Daemon.DataDir, log); err != nil {
-		return err
-	}
-	st, err := store.Open(ctx, cfg.DBPath())
+	d, err := newDaemon(ctx, cfg, log, deps{})
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	ver, err := st.Migrate(ctx)
-	if err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	log.Info("database ready", "path", cfg.DBPath(), "schema_version", ver)
-
-	authSvc, err := auth.New(st, auth.Options{})
-	if err != nil {
-		return err
-	}
-	if ok, err := authSvc.HasUsers(ctx); err != nil {
-		return err
-	} else if !ok {
-		log.Warn("no users exist; run `bosun setup` to create the first admin")
-	}
-
-	bus := events.NewBus()
-	apiSrv, err := api.New(api.Options{Auth: authSvc, Bus: bus, Logger: log, Version: version})
-	if err != nil {
-		return err
-	}
-
-	srv := &http.Server{
-		Addr:              cfg.Daemon.Listen,
-		Handler:           apiSrv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		// No WriteTimeout: SSE streams are long-lived. Request contexts derive
-		// from ctx so streams end on shutdown.
-		BaseContext: func(net.Listener) context.Context { return ctx },
-		ErrorLog:    slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-	}
+	defer d.Close()
 	ln, err := net.Listen("tcp", cfg.Daemon.Listen)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", cfg.Daemon.Listen, err)
 	}
-
-	go sweepSessions(ctx, st, log)
-
-	errc := make(chan error, 1)
-	go func() {
-		log.Info("bosund listening", "addr", ln.Addr().String(), "tls", cfg.Daemon.TLS.Enabled, "version", version)
-		if cfg.Daemon.TLS.Enabled {
-			errc <- srv.ServeTLS(ln, cfg.Daemon.TLS.CertFile, cfg.Daemon.TLS.KeyFile)
-		} else {
-			errc <- srv.Serve(ln)
-		}
-	}()
-
-	select {
-	case err := <-errc:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-	}
-	log.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
-	}
-	return nil
+	return d.Serve(ctx, ln)
 }
 
 // ensureDataDir creates the data dir with 0700 and warns if it is accessible

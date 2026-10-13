@@ -22,6 +22,8 @@ var forbiddenExact = []string{"os/exec"}
 var forbiddenPrefix = []string{
 	modulePath + "/internal/store",
 	modulePath + "/internal/auth",
+	modulePath + "/internal/vault",    // credentials arrive via CredentialSource only
+	modulePath + "/internal/dispatch", // integrations never invoke tools themselves
 }
 
 const integrationsPkg = modulePath + "/internal/integrations"
@@ -138,6 +140,11 @@ import (
 	"github.com/dperedo/bosun/internal/auth/vault"
 	"github.com/dperedo/bosun/internal/integrations/calendar"
 )`)
+	write("email/worse.go", `package email
+import (
+	"github.com/dperedo/bosun/internal/vault"
+	"github.com/dperedo/bosun/internal/dispatch"
+)`)
 	write("calendar/bad_test.go", `package calendar
 import _ "github.com/dperedo/bosun/internal/integrations/notes/sub"`)
 	write("notes/x.go", `package notes
@@ -158,12 +165,14 @@ import "github.com/dperedo/bosun/internal/integrations/notes"`)
 		"bad_test.go:2:8: imports another integration (notes)",
 		"x.go:2:8: imports the integrations root package",
 		"root.go:2:8: imports another integration (notes)",
+		"worse.go:3:2: imports github.com/dperedo/bosun/internal/vault",
+		"worse.go:4:2: imports github.com/dperedo/bosun/internal/dispatch",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing violation %q in:\n%s", want, joined)
 		}
 	}
-	if len(violations) != 7 {
-		t.Errorf("got %d violations, want 7:\n%s", len(violations), joined)
+	if len(violations) != 9 {
+		t.Errorf("got %d violations, want 9:\n%s", len(violations), joined)
 	}
 }

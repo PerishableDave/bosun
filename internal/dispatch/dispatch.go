@@ -448,5 +448,5 @@ func (d *Dispatcher) publishResult(c Call, res integration.Result, err error) {
 	if err != nil {
 		summary = "error: " + strings.TrimSpace(err.Error())
 	}
-	d.bus.Publish(c.UserID, events.Event{Type: events.TypeToolResult, Data: events.ToolResultData{ID: c.ToolCallID, Summary: summary}})
+	d.bus.Publish(c.UserID, events.Event{Type: events.TypeToolResult, Data: events.ToolResultData{ID: c.ToolCallID, Summary: summary, ConversationID: c.ConversationID}})
 }
