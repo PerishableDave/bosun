@@ -15,7 +15,7 @@ import (
 )
 
 func newSetupCmd(g *globals) *cobra.Command {
-	var force, lan, regenCert bool
+	var force, lan, regenCert, noConnect bool
 	var listen, dataDir, admin string
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -27,7 +27,7 @@ creates the first admin user if none exists. It is safe to re-run.`,
 			return runSetup(cmd.Context(), g, newPrompter(cmd.InOrStdin(), cmd.OutOrStdout()), setupOpts{
 				force: force, listen: listen, dataDir: dataDir, admin: admin,
 				listenSet: cmd.Flags().Changed("listen"), dataDirSet: cmd.Flags().Changed("data-dir"),
-				lan: lan, lanSet: cmd.Flags().Changed("lan"), regenCert: regenCert,
+				lan: lan, lanSet: cmd.Flags().Changed("lan"), regenCert: regenCert, noConnect: noConnect,
 			})
 		},
 	}
@@ -36,6 +36,7 @@ creates the first admin user if none exists. It is safe to re-run.`,
 	cmd.Flags().StringVar(&dataDir, "data-dir", config.DefaultDataDir, "data directory")
 	cmd.Flags().StringVar(&admin, "admin", "", "admin username (prompted if empty)")
 	cmd.Flags().BoolVar(&lan, "lan", false, "listen on the local network ("+lanListen+") over HTTPS with a self-signed certificate")
+	cmd.Flags().BoolVar(&noConnect, "no-connect", false, "do not offer to connect an email account and calendar")
 	cmd.Flags().BoolVar(&regenCert, "regenerate-cert", false, "replace the generated self-signed certificate (e.g. after the host's IP changed)")
 	return cmd
 }
@@ -47,6 +48,7 @@ type setupOpts struct {
 	admin                 string
 	lan, lanSet           bool
 	regenCert             bool
+	noConnect             bool
 }
 
 func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
@@ -73,6 +75,11 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 		// websearch.search needs base_url pointing at a SearXNG instance.
 		enabled := true
 		cfg.Integrations["websearch"] = config.IntegrationConfig{Enabled: &enabled}
+		// email and calendar are harmless without credentials (their tools
+		// answer "not configured" until `bosun connect email` / `connect
+		// calendar` links an account), so they are on by default.
+		cfg.Integrations["email"] = config.IntegrationConfig{Enabled: &enabled}
+		cfg.Integrations["calendar"] = config.IntegrationConfig{Enabled: &enabled}
 		var err error
 		lan := o.lan
 		if !o.lanSet && !o.listenSet {
@@ -142,8 +149,14 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 	}
 	if has {
 		fmt.Fprintln(out, "Users already exist; not creating an admin.")
-	} else if err := createAdmin(ctx, p, authSvc, o.admin); err != nil {
-		return err
+	} else {
+		admin, err := createAdmin(ctx, p, authSvc, o.admin)
+		if err != nil {
+			return err
+		}
+		if !o.noConnect {
+			offerAccounts(ctx, p, cfg, st, admin.ID)
+		}
 	}
 
 	fmt.Fprintln(out)
@@ -151,6 +164,10 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 	fmt.Fprintf(out, "  bosund --config %s\n", g.configPath)
 	fmt.Fprintln(out, "  bosun login")
 	fmt.Fprintln(out, "  bosun chat \"hello\"")
+	fmt.Fprintln(out, "Accounts (any time, for each family member after `bosun login`):")
+	fmt.Fprintln(out, "  bosun connect email      mail (and iCloud/Fastmail calendar) with an app password")
+	fmt.Fprintln(out, "  bosun connect calendar   a read-only calendar from its private iCal (ICS) link")
+	fmt.Fprintln(out, "  Advanced: `bosun connect google --scopes caldav` for Google Calendar write access (needs a Google Cloud OAuth client).")
 	return nil
 }
 
@@ -163,7 +180,7 @@ func answer(p *prompter, label, val string, set bool) (string, error) {
 	return p.line(label, val)
 }
 
-func createAdmin(ctx context.Context, p *prompter, a *auth.Service, username string) error {
+func createAdmin(ctx context.Context, p *prompter, a *auth.Service, username string) (*auth.User, error) {
 	var err error
 	if username == "" {
 		def := "admin"
@@ -171,16 +188,16 @@ func createAdmin(ctx context.Context, p *prompter, a *auth.Service, username str
 			def = u
 		}
 		if username, err = p.line("Admin username", def); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := auth.ValidateUsername(username); err != nil {
-		return err
+		return nil, err
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		pw, err := p.password(fmt.Sprintf("Password for %s (min %d chars)", username, auth.MinPasswordLen))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := auth.ValidatePassword(pw); err != nil {
 			fmt.Fprintln(p.out, err)
@@ -188,17 +205,18 @@ func createAdmin(ctx context.Context, p *prompter, a *auth.Service, username str
 		}
 		confirm, err := p.password("Confirm password")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if pw != confirm {
 			fmt.Fprintln(p.out, "Passwords do not match.")
 			continue
 		}
-		if _, err := a.CreateUser(ctx, username, pw, auth.RoleAdmin); err != nil {
-			return err
+		u, err := a.CreateUser(ctx, username, pw, auth.RoleAdmin)
+		if err != nil {
+			return nil, err
 		}
 		fmt.Fprintf(p.out, "Created admin user %q\n", username)
-		return nil
+		return u, nil
 	}
-	return errors.New("too many attempts")
+	return nil, errors.New("too many attempts")
 }

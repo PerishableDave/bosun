@@ -23,8 +23,17 @@ import (
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
+// slowHTTPClient is for requests that make the daemon talk to a third party
+// (credential tests log in to mail and calendar servers).
+var slowHTTPClient = &http.Client{Timeout: 2 * time.Minute}
+
 // call performs a JSON request; on non-2xx it returns the API error message.
 func call(ctx context.Context, method, url, token string, body, out any) error {
+	return callWith(ctx, httpClient, method, url, token, body, out)
+}
+
+// callWith is call with a specific HTTP client.
+func callWith(ctx context.Context, hc *http.Client, method, url, token string, body, out any) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -43,7 +52,7 @@ func call(ctx context.Context, method, url, token string, body, out any) error {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := doHTTP(httpClient, req)
+	resp, err := doHTTP(hc, req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w (is bosund running?)", method, url, err)
 	}

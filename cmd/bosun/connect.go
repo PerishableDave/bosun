@@ -42,8 +42,14 @@ func newConnectCmd(g *globals) *cobra.Command {
 	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "connect <provider>",
-		Short: "Link your Google or Microsoft account so integrations can use it (OAuth2)",
-		Long: "Opens the provider's sign-in page in your browser; after you approve, the provider\n" +
+		Short: "Link accounts: `connect email` / `connect calendar` (app passwords, ICS links) or OAuth (google, microsoft)",
+		Long: "The easy path needs no OAuth setup:\n" +
+			"  bosun connect email      link a mailbox with an app password (Gmail, iCloud, Fastmail, Outlook.com,\n" +
+			"                           Yahoo, others); offers the calendar too where the same password works\n" +
+			"  bosun connect calendar   add a read-only calendar from its private iCal (ICS) link\n\n" +
+			"Advanced: `bosun connect <provider>` (google, microsoft) links an account with OAuth2, which needs an\n" +
+			"OAuth client configured under oauth: in bosun.yaml (for Google: a Google Cloud project).\n" +
+			"It opens the provider's sign-in page in your browser; after you approve, the provider\n" +
 			"redirects to bosund, which stores the tokens encrypted in your vault and refreshes them\n" +
 			"as needed. Integrations that need the account (email, calendar, ...) then use it.\n\n" +
 			"--scopes picks scope bundles: google: email (Gmail read/send/modify), calendar, tasks,\n" +
@@ -84,7 +90,7 @@ func newConnectCmd(g *globals) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&scopes, "scopes", "", "comma-separated scope bundles (default: email,calendar)")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "only print the URL (headless use)")
-	cmd.AddCommand(newConnectListCmd(g), newConnectRemoveCmd(g))
+	cmd.AddCommand(newConnectListCmd(g), newConnectRemoveCmd(g), newConnectEmailCmd(g), newConnectCalendarCmd(g))
 	return cmd
 }
 
