@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -129,12 +130,45 @@ type RoutineTrigger struct {
 // HooksConfig configures hooks.
 type HooksConfig struct {
 	ScriptHooks ScriptHooksConfig `yaml:"script_hooks"`
+	// RedactSecrets registers the built-in pre_model_call hook that masks
+	// API keys and tokens in outgoing model requests (default true).
+	RedactSecrets *bool `yaml:"redact_secrets,omitempty"`
 }
 
+// RedactSecretsEnabled reports whether the built-in secret redaction hook is
+// on.
+func (h HooksConfig) RedactSecretsEnabled() bool { return h.RedactSecrets == nil || *h.RedactSecrets }
+
 // ScriptHooksConfig gates user-supplied executable hooks (off by default).
+// Scripts are config-only: there is no API to add them.
 type ScriptHooksConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool               `yaml:"enabled"`
+	Scripts []ScriptHookConfig `yaml:"scripts,omitempty"`
 }
+
+// ScriptHookConfig declares one script hook.
+type ScriptHookConfig struct {
+	// Name is optional; the default is derived from the command.
+	Name string `yaml:"name,omitempty"`
+	// Point is pre_tool_call | post_tool_call | pre_model_call | on_approval.
+	Point string `yaml:"point"`
+	// Command is the argv; Command[0] must be an absolute path (no PATH
+	// lookup, no shell).
+	Command []string `yaml:"command"`
+	// Timeout bounds one run (default 5s, max 60s).
+	Timeout time.Duration `yaml:"timeout,omitempty"`
+	// Match is an optional glob (path.Match syntax) on the tool or
+	// capability name; tool hook points only.
+	Match string `yaml:"match,omitempty"`
+}
+
+// Script hook timeouts.
+const (
+	DefaultScriptHookTimeout = 5 * time.Second
+	MaxScriptHookTimeout     = 60 * time.Second
+)
+
+var validScriptPoint = map[string]bool{"pre_tool_call": true, "post_tool_call": true, "pre_model_call": true, "on_approval": true}
 
 // AuditConfig configures the audit log.
 type AuditConfig struct {
@@ -293,6 +327,11 @@ func (c *Config) applyDefaults() {
 	if c.Memory.RecallLimit == 0 {
 		c.Memory.RecallLimit = DefaultRecallLimit
 	}
+	for i := range c.Hooks.ScriptHooks.Scripts {
+		if c.Hooks.ScriptHooks.Scripts[i].Timeout == 0 {
+			c.Hooks.ScriptHooks.Scripts[i].Timeout = DefaultScriptHookTimeout
+		}
+	}
 }
 
 // pathKey reports whether an integration setting key holds a filesystem path.
@@ -311,6 +350,14 @@ func (c *Config) expandPaths() error {
 	}
 	if c.Daemon.TLS.KeyFile, err = ExpandPath(c.Daemon.TLS.KeyFile); err != nil {
 		return err
+	}
+	for i, sc := range c.Hooks.ScriptHooks.Scripts {
+		if len(sc.Command) > 0 {
+			if sc.Command[0], err = ExpandPath(sc.Command[0]); err != nil {
+				return fmt.Errorf("hooks.script_hooks.scripts[%d].command: %w", i, err)
+			}
+			c.Hooks.ScriptHooks.Scripts[i] = sc
+		}
 	}
 	for name, ic := range c.Integrations {
 		for k, v := range ic.Settings {
@@ -444,7 +491,44 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, c.validateScriptHooks()...)
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateScriptHooks() []error {
+	var errs []error
+	names := map[string]bool{}
+	for i, s := range c.Hooks.ScriptHooks.Scripts {
+		where := fmt.Sprintf("hooks.script_hooks.scripts[%d]", i)
+		add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(where+format, args...)) }
+		if !validScriptPoint[s.Point] {
+			add(".point %q: must be pre_tool_call, post_tool_call, pre_model_call, or on_approval", s.Point)
+		}
+		if len(s.Command) == 0 || s.Command[0] == "" {
+			add(".command: required")
+		} else if !filepath.IsAbs(s.Command[0]) {
+			add(".command %q: the executable must be an absolute path", s.Command[0])
+		}
+		if s.Timeout < 0 || s.Timeout > MaxScriptHookTimeout {
+			add(".timeout %s: must be between 0 and %s", s.Timeout, MaxScriptHookTimeout)
+		}
+		if s.Match != "" {
+			if s.Point != "pre_tool_call" && s.Point != "post_tool_call" {
+				add(".match: only allowed for tool hook points")
+			} else if _, err := path.Match(s.Match, ""); err != nil {
+				add(".match %q: %v", s.Match, err)
+			}
+		}
+		if s.Name != "" {
+			if !nameRe.MatchString(s.Name) {
+				add(".name %q: invalid", s.Name)
+			} else if names[s.Name] {
+				add(".name %q: duplicate", s.Name)
+			}
+			names[s.Name] = true
+		}
+	}
+	return errs
 }
 
 func isLoopback(host string) bool {

@@ -21,6 +21,7 @@ import (
 	"github.com/dperedo/bosun/internal/api/events"
 	"github.com/dperedo/bosun/internal/audit"
 	"github.com/dperedo/bosun/internal/dispatch"
+	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/memory"
@@ -63,6 +64,10 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithHooks sets the registry whose pre_model_call hooks run before every
+// model call.
+func WithHooks(h *hooks.Registry) Option { return func(a *Agent) { a.hooks = h } }
+
 // WithMaxTokens sets Request.MaxTokens (0 = provider default).
 func WithMaxTokens(n int) Option { return func(a *Agent) { a.maxTokens = n } }
 
@@ -88,6 +93,7 @@ type Agent struct {
 	log          *slog.Logger
 	steps        int
 	maxTokens    int
+	hooks        *hooks.Registry
 
 	mem         *memory.Store
 	extractor   *memory.Extractor
@@ -187,6 +193,9 @@ func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText 
 	sent := 0 // history[:sent] has already been sent to the model (for audit content)
 	for step := 1; step <= a.steps; step++ {
 		req := llm.Request{Model: model, System: system, Messages: names.encode(history), Tools: specs, MaxTokens: a.maxTokens}
+		if err := a.hooks.RunPreModelCall(ctx, userID, &req); err != nil {
+			return &turnError{public: "blocked by pre_model_call hook", err: err}
+		}
 		resp, err := a.callModel(ctx, prov, req, names, userID, conversationID)
 		a.recordLLM(userID, prov.Name(), model, step, history[sent:], resp, err)
 		sent = len(history)

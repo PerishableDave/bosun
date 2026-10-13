@@ -22,7 +22,6 @@ import (
 	"github.com/dperedo/bosun/internal/auth"
 	"github.com/dperedo/bosun/internal/config"
 	"github.com/dperedo/bosun/internal/dispatch"
-	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/integrations/mcp"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
@@ -148,10 +147,16 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	log.Info("policy rules seeded from config", "created", rep.Created, "unchanged", rep.Unchanged,
 		"kept_db_value", rep.Kept, "missing_users", strings.Join(rep.MissingUsers, ","))
 
+	// Hooks.
+	hk, err := buildHooks(cfg, auditLog, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Approvals.
 	d.bus = events.NewBus()
 	appr := approval.NewManager(d.store, d.bus, approval.Options{
-		Timeout: cfg.Policy.ApprovalTimeout, Audit: auditLog, Log: log,
+		Timeout: cfg.Policy.ApprovalTimeout, Audit: auditLog, Log: log, OnResolve: onApprovalHooks(hk),
 	})
 	n, err := appr.ExpireStale(ctx)
 	if err != nil {
@@ -166,8 +171,8 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	go sweepSessions(ctx, d.store, log)
 
 	// Dispatcher and agent.
-	disp := dispatch.New(tools, engine, appr, auditLog, hooks.NewRegistry(), d.bus, dispatch.WithLogger(log))
-	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx)}
+	disp := dispatch.New(tools, engine, appr, auditLog, hk, d.bus, dispatch.WithLogger(log))
+	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx), agent.WithHooks(hk)}
 	mem := memory.NewStore(d.store)
 	if cfg.Memory.IsEnabled() {
 		extProv, extModel, err := llms.Resolve(cfg.ExtractModelRef())
@@ -193,6 +198,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
 		Tools: tools, Audit: auditLog, Memories: mem, WebUI: webHandler,
 		Integrations: func() []integration.Integration { return initialised },
+		Hooks:        hk,
 	})
 	if err != nil {
 		return nil, err

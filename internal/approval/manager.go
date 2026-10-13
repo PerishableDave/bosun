@@ -54,6 +54,13 @@ type Options struct {
 	// another process sharing the database (in-process resolutions wake
 	// waiters immediately). Default 2s.
 	PollInterval time.Duration
+	// OnResolve, if set, is called after an approval leaves the pending
+	// state: resolved by the user (Approve / Deny), expired
+	// (Decision(DecisionExpired)), or canceled (Decision(DecisionCanceled)).
+	// It runs synchronously on the resolving goroutine after the state change
+	// is persisted and published, so it must not block; panics are
+	// recovered. The daemon wires it to the on_approval hooks.
+	OnResolve func(ctx context.Context, a Approval, d Decision)
 }
 
 // StoreManager is the database-backed Manager. Approvals are persisted, so
@@ -68,6 +75,7 @@ type StoreManager struct {
 	aud     audit.Logger
 	log     *slog.Logger
 	poll    time.Duration
+	onRes   func(ctx context.Context, a Approval, d Decision)
 
 	mu      sync.Mutex
 	waiters map[string]chan struct{} // closed (and removed) when the approval changes state
@@ -78,7 +86,7 @@ var _ Manager = (*StoreManager)(nil)
 // NewManager returns a StoreManager. bus may be nil (no events).
 func NewManager(st Store, bus events.Publisher, opts Options) *StoreManager {
 	m := &StoreManager{st: st, bus: bus, timeout: opts.Timeout, aud: opts.Audit, log: opts.Log, poll: opts.PollInterval,
-		waiters: map[string]chan struct{}{}}
+		onRes: opts.OnResolve, waiters: map[string]chan struct{}{}}
 	if m.timeout <= 0 {
 		m.timeout = DefaultTimeout
 	}
@@ -233,6 +241,7 @@ func (m *StoreManager) cancel(id string, cause error) error {
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
 			Data: events.ApprovalResolvedData{ApprovalID: id, Decision: DecisionCanceled, ConversationID: out.ConversationID}})
 		m.wake(id)
+		m.notify(ctx, out, DecisionCanceled)
 	} else if !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
 		m.log.Error("approval: cancel failed", "approval_id", id, "err", err)
 	}
@@ -284,6 +293,7 @@ func (m *StoreManager) Resolve(ctx context.Context, id string, userID int64, d D
 	m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
 		Data: events.ApprovalResolvedData{ApprovalID: id, Decision: string(d), ConversationID: out.ConversationID}})
 	m.wake(id)
+	m.notify(ctx, out, d)
 	return nil
 }
 
@@ -314,6 +324,7 @@ func (m *StoreManager) ExpireStale(ctx context.Context) (int, error) {
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
 			Data: events.ApprovalResolvedData{ApprovalID: out.ID, Decision: DecisionExpired, ConversationID: out.ConversationID}})
 		m.wake(out.ID)
+		m.notify(ctx, out, DecisionExpired)
 	}
 	return len(as), nil
 }
@@ -339,6 +350,19 @@ func (m *StoreManager) Run(ctx context.Context, interval time.Duration) {
 			m.expireDue(ctx)
 		}
 	}
+}
+
+// notify calls Options.OnResolve, recovering panics.
+func (m *StoreManager) notify(ctx context.Context, a *Approval, d Decision) {
+	if m.onRes == nil {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			m.log.Error("approval: OnResolve panicked", "approval_id", a.ID, "panic", fmt.Sprint(p))
+		}
+	}()
+	m.onRes(ctx, *a, d)
 }
 
 func (m *StoreManager) publish(userID int64, ev events.Event) {
