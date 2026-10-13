@@ -39,6 +39,10 @@ type DaemonConfig struct {
 	TLS     TLSConfig `yaml:"tls"`
 	// WebUI serves the browser UI at / (default true).
 	WebUI *bool `yaml:"web_ui,omitempty"`
+	// MasterKey selects where the vault master key lives: "auto" (default:
+	// the OS keychain if available, else $data_dir/master.key), "file", or
+	// "keychain".
+	MasterKey string `yaml:"master_key,omitempty"`
 }
 
 // WebUIEnabled reports whether the web UI is mounted.
@@ -365,7 +369,12 @@ func (c *Config) Validate() error {
 		add("daemon.data_dir: required")
 	}
 	if c.Daemon.TLS.Enabled && (c.Daemon.TLS.CertFile == "" || c.Daemon.TLS.KeyFile == "") {
-		add("daemon.tls: cert_file and key_file are required when enabled")
+		add("daemon.tls: cert_file and key_file are required when enabled (run `bosun setup --lan` to generate a self-signed pair)")
+	}
+	switch c.Daemon.MasterKey {
+	case "", "auto", "file", "keychain":
+	default:
+		add("daemon.master_key %q: must be auto, file, or keychain", c.Daemon.MasterKey)
 	}
 
 	prov, model, ok := strings.Cut(c.LLM.Default, "/")

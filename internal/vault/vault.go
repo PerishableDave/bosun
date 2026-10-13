@@ -29,12 +29,9 @@ import (
 // KeySize is the master key length (AES-256).
 const KeySize = 32
 
-// KeySource yields the 32-byte master key. It is an interface so the key can
-// later live in the OS keychain (macOS Keychain, Secret Service) instead of a
-// file.
-//
-// TODO: add a keychain-backed KeySource and prefer it when available, keeping
-// FileKeySource as the fallback (ARCHITECTURE.md "Credential vault").
+// KeySource yields the 32-byte master key: FileKeySource (a mode-0600 file),
+// KeychainKeySource (the OS keychain), or StaticKeySource. SelectKeySource
+// chooses between the first two from config daemon.master_key.
 type KeySource interface {
 	Key(ctx context.Context) ([]byte, error)
 }

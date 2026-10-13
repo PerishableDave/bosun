@@ -18,6 +18,7 @@ import (
 
 	"github.com/dperedo/bosun/internal/api"
 	"github.com/dperedo/bosun/internal/auth"
+	"github.com/dperedo/bosun/internal/config"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -42,7 +43,7 @@ func call(ctx context.Context, method, url, token string, body, out any) error {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := doHTTP(httpClient, req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w (is bosund running?)", method, url, err)
 	}
@@ -126,16 +127,25 @@ func newLoginCmd(g *globals) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s; token saved to %s\n", lr.User.Username, path)
-			return nil
+			return g.rememberServer(cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVarP(&username, "username", "u", "", "username (prompted if empty)")
 	return cmd
 }
 
-// tokenPath returns $data_dir/cli-token. (OS keychain storage comes later.)
+// tokenPath returns $data_dir/cli-token, using the default data dir when
+// there is no bosun.yaml. (OS keychain storage comes later.)
 func (g *globals) tokenPath() (string, error) {
 	cfg, err := g.loadConfig()
+	if errors.Is(err, fs.ErrNotExist) {
+		// A client on another device has no bosun.yaml: keep the token in
+		// the default data dir.
+		cfg = config.Default()
+		if cfg.Daemon.DataDir, err = config.ExpandPath(cfg.Daemon.DataDir); err != nil {
+			return "", err
+		}
+	}
 	if err != nil {
 		return "", err
 	}

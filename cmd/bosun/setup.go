@@ -15,7 +15,7 @@ import (
 )
 
 func newSetupCmd(g *globals) *cobra.Command {
-	var force bool
+	var force, lan, regenCert bool
 	var listen, dataDir, admin string
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -27,6 +27,7 @@ creates the first admin user if none exists. It is safe to re-run.`,
 			return runSetup(cmd.Context(), g, newPrompter(cmd.InOrStdin(), cmd.OutOrStdout()), setupOpts{
 				force: force, listen: listen, dataDir: dataDir, admin: admin,
 				listenSet: cmd.Flags().Changed("listen"), dataDirSet: cmd.Flags().Changed("data-dir"),
+				lan: lan, lanSet: cmd.Flags().Changed("lan"), regenCert: regenCert,
 			})
 		},
 	}
@@ -34,6 +35,8 @@ creates the first admin user if none exists. It is safe to re-run.`,
 	cmd.Flags().StringVar(&listen, "listen", config.DefaultListen, "daemon listen address")
 	cmd.Flags().StringVar(&dataDir, "data-dir", config.DefaultDataDir, "data directory")
 	cmd.Flags().StringVar(&admin, "admin", "", "admin username (prompted if empty)")
+	cmd.Flags().BoolVar(&lan, "lan", false, "listen on the local network ("+lanListen+") over HTTPS with a self-signed certificate")
+	cmd.Flags().BoolVar(&regenCert, "regenerate-cert", false, "replace the generated self-signed certificate (e.g. after the host's IP changed)")
 	return cmd
 }
 
@@ -42,6 +45,8 @@ type setupOpts struct {
 	listen, dataDir       string
 	listenSet, dataDirSet bool
 	admin                 string
+	lan, lanSet           bool
+	regenCert             bool
 }
 
 func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
@@ -55,7 +60,12 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 		return fmt.Errorf("check config: %w", statErr)
 	}
 
-	if exists && !o.force {
+	if exists && !o.force && o.lan {
+		if err := enableLANInConfig(g.configPath, o); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Updated %s for LAN access over HTTPS.\n", g.configPath)
+	} else if exists && !o.force {
 		fmt.Fprintf(out, "Using existing config %s (pass --force to overwrite).\n", g.configPath)
 	} else {
 		cfg := config.Default()
@@ -64,11 +74,24 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 		enabled := true
 		cfg.Integrations["websearch"] = config.IntegrationConfig{Enabled: &enabled}
 		var err error
-		if cfg.Daemon.Listen, err = answer(p, "Listen address", o.listen, o.listenSet); err != nil {
+		lan := o.lan
+		if !o.lanSet && !o.listenSet {
+			if lan, err = p.yesNo("Allow other devices on your network to connect? (enables HTTPS with a self-signed certificate)", false); err != nil {
+				return err
+			}
+		}
+		listen := o.listen
+		if lan && !o.listenSet {
+			listen = lanListen
+		}
+		if cfg.Daemon.Listen, err = answer(p, "Listen address", listen, o.listenSet || lan); err != nil {
 			return err
 		}
 		if cfg.Daemon.DataDir, err = answer(p, "Data directory", o.dataDir, o.dataDirSet); err != nil {
 			return err
+		}
+		if lan {
+			setLANTLS(cfg)
 		}
 		// Validate a copy with paths expanded before writing anything.
 		check := *cfg
@@ -95,6 +118,11 @@ func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
 		return fmt.Errorf("chmod data dir: %w", err)
 	}
 	fmt.Fprintf(out, "Data directory %s (mode 0700)\n", cfg.Daemon.DataDir)
+	if cfg.Daemon.TLS.Enabled {
+		if err := ensureTLSCert(out, cfg, o.regenCert); err != nil {
+			return err
+		}
+	}
 
 	st, err := store.Open(ctx, cfg.DBPath())
 	if err != nil {

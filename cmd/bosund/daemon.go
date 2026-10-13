@@ -117,7 +117,14 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 
 	// Integrations: Init, then Register.
 	auditLog := audit.NewStoreLogger(d.store, audit.Options{LogContent: cfg.Audit.LogContent})
-	vlt := vault.New(d.store, vault.NewFileKeySource(cfg.Daemon.DataDir))
+	keys, keyDesc, err := vault.SelectKeySource(ctx, vault.KeySourceOptions{
+		Mode: cfg.Daemon.MasterKey, DataDir: cfg.Daemon.DataDir, Detect: detectKeychain, Log: log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Info("vault master key ready", "source", keyDesc)
+	vlt := vault.New(d.store, keys)
 	tools := integration.NewRegistry()
 	for _, in := range d.enabledIntegrations(dp) {
 		if err := d.initIntegration(ctx, tools, vlt, in); err != nil {
@@ -193,6 +200,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
 		Tools: tools, Audit: auditLog, Memories: mem, WebUI: webHandler,
 		Integrations: func() []integration.Integration { return initialised },
+		Credentials:  vlt,
 	})
 	if err != nil {
 		return nil, err
@@ -275,6 +283,11 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 		// from ctx so streams and turns end on shutdown.
 		BaseContext: func(net.Listener) context.Context { return ctx },
 		ErrorLog:    slog.NewLogLogger(d.log.Handler(), slog.LevelWarn),
+	}
+	if d.cfg.Daemon.TLS.Enabled {
+		if err := logTLSCert(d.log, d.cfg.Daemon.TLS.CertFile); err != nil {
+			return err
+		}
 	}
 	errc := make(chan error, 1)
 	go func() {

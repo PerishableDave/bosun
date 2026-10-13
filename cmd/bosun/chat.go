@@ -101,7 +101,7 @@ func (c *chatSession) turn(ctx context.Context, content string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := streamClient.Do(req)
+	resp, err := doHTTP(streamClient, req)
 	if err != nil {
 		return fmt.Errorf("send message: %w (is bosund running?)", err)
 	}

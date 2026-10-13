@@ -61,6 +61,10 @@ type Options struct {
 	// Integrations lists every initialised integration, including ones that
 	// registered no tools, for GET /v1/integrations.
 	Integrations func() []integration.Integration
+
+	// Credentials is the credential vault (usually *vault.Vault) behind
+	// /v1/credentials.
+	Credentials Credentials
 }
 
 // Server holds API dependencies.
@@ -82,6 +86,7 @@ type Server struct {
 	webUI     http.Handler
 
 	integrations func() []integration.Integration
+	creds        Credentials
 
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
@@ -95,6 +100,7 @@ func New(o Options) (*Server, error) {
 	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat,
 		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
 		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, turns: map[string]bool{}}
+	s.creds = o.Credentials
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -136,6 +142,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/memory", authed(s.handleCreateMemory))
 	mux.Handle("PUT /v1/memory/{id}", authed(s.handleUpdateMemory))
 	mux.Handle("DELETE /v1/memory/{id}", authed(s.handleDeleteMemory))
+	mux.Handle("GET /v1/credentials", authed(s.handleListCredentials))
+	mux.Handle("PUT /v1/credentials/{integration}/{kind}", authed(s.handlePutCredential))
+	mux.Handle("DELETE /v1/credentials/{integration}/{kind}", authed(s.handleDeleteCredential))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)
