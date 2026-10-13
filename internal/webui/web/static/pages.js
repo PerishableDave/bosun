@@ -47,13 +47,59 @@ export async function renderTools(el) {
   });
 
   const d = rules.defaults || {};
+  const accounts = h("section", { class: "accounts" }, h("p", { class: "muted" }, "Loading accounts…"));
+  renderAccounts(accounts);
   el.replaceChildren(
+    accounts,
     h("h2", {}, "Tools"),
     h("p", { class: "muted small" }, `Defaults: read ${d.read}, write ${d.write}, destructive ${d.destructive}. A custom rule overrides the default for that tool.`),
     msg,
     rows.length
       ? h("table", { class: "grid" }, h("thead", {}, h("tr", {}, h("th", {}, "Tool"), h("th", {}, "Risk"), h("th", {}, "Decision"))), h("tbody", {}, rows))
       : h("p", { class: "muted" }, "No tools are enabled. Enable integrations in bosun.yaml."));
+}
+
+// ---------- Accounts ----------
+
+// describeCredential turns a stored credential (never its secret) into a
+// readable line.
+function describeCredential(c) {
+  if (c.integration === "email" && c.kind === "password") return "Email (app password)";
+  if (c.integration === "calendar" && c.kind === "password") return "Calendar (CalDAV)";
+  if (c.integration === "calendar" && c.kind === "ics") return "Calendar feed (read-only)";
+  if (c.integration === "calendar" && c.kind.startsWith("ics:")) return "Calendar feed “" + c.kind.slice(4) + "” (read-only)";
+  return c.integration + " · " + c.kind;
+}
+
+async function renderAccounts(el) {
+  const get = (path) => api("GET", path).catch(() => null);
+  const [creds, oauth] = await Promise.all([get("/v1/credentials"), get("/v1/oauth")]);
+  const rows = [];
+  for (const a of (oauth && oauth.accounts) || []) {
+    rows.push(h("tr", {},
+      h("td", { "data-label": "Account" }, h("strong", {}, a.email || a.provider)),
+      h("td", { "data-label": "Type" }, a.provider + " (OAuth)"),
+      h("td", { "data-label": "Updated" }, h("span", { class: "muted small" }, fmtTime(a.updated_at)))));
+  }
+  for (const c of (creds && creds.credentials) || []) {
+    if (c.kind.startsWith("oauth2:")) continue; // shown above
+    rows.push(h("tr", {},
+      h("td", { "data-label": "Account" }, h("strong", {}, describeCredential(c))),
+      h("td", { "data-label": "Type" }, c.scope === "shared" ? c.integration + " (household)" : c.integration),
+      h("td", { "data-label": "Updated" }, h("span", { class: "muted small" }, fmtTime(c.updated_at)))));
+  }
+  const hint = h("div", { class: "muted small" },
+    h("p", {}, "Connect accounts from a terminal (each person after ", h("code", {}, "bosun login"), "):"),
+    h("ul", {},
+      h("li", {}, h("code", {}, "bosun connect email"), " — mail with an app password (Gmail, iCloud, Fastmail, Outlook.com, Yahoo, others); also sets up iCloud/Fastmail calendars"),
+      h("li", {}, h("code", {}, "bosun connect calendar --ics"), " — a read-only calendar from its private iCal link (e.g. Google Calendar’s “Secret address in iCal format”)"),
+      h("li", {}, h("code", {}, "bosun connect google --scopes caldav"), " — advanced: Google Calendar with write access (needs a Google Cloud OAuth client)")));
+  el.replaceChildren(
+    h("h2", {}, "Accounts"),
+    rows.length
+      ? h("table", { class: "grid" }, h("thead", {}, h("tr", {}, h("th", {}, "Account"), h("th", {}, "Type"), h("th", {}, "Updated"))), h("tbody", {}, rows))
+      : h("p", { class: "muted" }, "No accounts linked yet."),
+    hint);
 }
 
 // ---------- Memory ----------

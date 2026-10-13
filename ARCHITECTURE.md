@@ -98,6 +98,7 @@ internal/
   memory/            per-user memory store and retrieval
   auth/              users, roles, sessions
   vault/             credential vault, master key sources (file, OS keychain)
+  providers/         email provider presets (hosts, app passwords, CalDAV/ICS), autodiscovery
   tlsutil/           self-signed cert generation, fingerprints, pinned clients
   api/               HTTP + SSE handlers, request auth
   config/            bosun.yaml loading, validation, defaults
@@ -203,8 +204,15 @@ Rules that keep in-process plugins honest:
   instead of being overwritten. Recurrences (common RRULE shapes, RDATE,
   EXDATE, RECURRENCE-ID overrides) are expanded locally in the event's own
   zone; free/busy is computed locally from events. The account comes from the
-  vault: `oauth2:google` (bearer token, Google's CalDAV endpoint, needs the full
-  calendar scope) or `password` (Basic auth; `url`/`user` fields). Credentials
+  vault, in order: `oauth2:google` (bearer token, Google's CalDAV endpoint,
+  needs the full calendar scope), `password` (Basic auth; `url`/`user`
+  fields), then read-only ICS feeds (`ics`, `ics:<name>`: the Secret is a
+  private feed URL; the source's optional `CredentialKindLister` finds the
+  suffixed kinds). Feeds are fetched over https only through a dialer that
+  refuses private/loopback addresses, capped at 5 MB, parsed leniently once
+  and cached per user for 5 minutes; each is one read-only calendar, merged
+  in `calendar.events`, and the write tools refuse ICS-only accounts.
+  Credentials
   go only over https (http only to loopback) and only to the configured
   host's site, even across redirects or principal hrefs on other hosts.
   Discovered calendars are cached per user (5 min, keyed by a credential
@@ -257,6 +265,13 @@ API keys do not leak into third-party servers.
 | `websearch` | shared | `search`, `fetch` (read) |
 | `notes` | per user (or shared) | `list`, `search`, `read` (read); `write`, `append` (write); `delete` (destructive) |
 | `email` | per user | `list`, `search`, `read`, `folders` (read); `draft`, `archive`, `mark` (write); `send` (destructive) |
+| `calendar` | per user | `calendars`, `events`, `get`, `freebusy` (read); `create`, `update` (write); `delete` (destructive). CalDAV, or read-only ICS feeds |
+
+`email` and `calendar` implement the optional `integration.CredentialTester`
+(`POST /v1/integrations/{name}/test`): `bosun connect email` uses it to check
+an app password (IMAP login + SMTP AUTH) before storing it. Provider presets
+(hosts, app-password instructions, CalDAV and ICS support) live in
+`internal/providers`, which both the CLI and integrations may import.
 | `mcp` | shared | discovered from external servers |
 
 **email** (`internal/integrations/email`) speaks IMAP4rev1 and SMTP itself

@@ -14,8 +14,10 @@ Built-in integrations so far are `websearch` (`websearch.fetch` for public web
 pages; `websearch.search` needs a SearXNG instance) and `notes` (Markdown
 files, off by default), plus per-user memory, the MCP bridge (third-party
 tools from external MCP servers), routines (scheduled and event-driven runs),
-and the web UI, plus `email` (IMAP/SMTP) and `calendar` (CalDAV: Google,
-iCloud, Fastmail, Nextcloud, ...), both off by default.
+and the web UI, plus `email` (IMAP/SMTP) and `calendar` (CalDAV: iCloud,
+Fastmail, Google, Nextcloud, ...; read-only ICS feeds for Google Calendar,
+Outlook.com and others), which `bosun setup` enables and links with app
+passwords via `bosun connect email`.
 
 ## Quick start
 
@@ -28,7 +30,9 @@ make build                    # builds bin/bosund and bin/bosun
 
 `bosun setup` prompts for LAN access, the listen address, data directory, admin
 username and password; `--lan`, `--listen`, `--data-dir` and `--admin` skip
-those prompts (see [LAN](#using-bosun-from-other-devices-lan)). Use
+those prompts (see [LAN](#using-bosun-from-other-devices-lan)). It then offers
+to connect your email (and calendar) with an app password, testing the login
+before saving it (`--no-connect` skips that; see [Email](#email)). Use
 `--config <path>` (or `BOSUN_CONFIG`) on every command to keep the config
 elsewhere.
 
@@ -56,7 +60,7 @@ In another terminal:
 `bosund` also serves a small browser UI at its listen address (by default
 <http://127.0.0.1:7777/>): sign in with your Bosun username and password, chat
 with streamed replies and tool calls, approve or deny pending approvals (also
-those raised by routines in other conversations), set allow/ask/deny per tool,
+those raised by routines in other conversations), set allow/ask/deny per tool and see your linked accounts (connecting them is done with `bosun connect`),
 and browse, add, edit and delete your memories. It is plain HTML/JS embedded in
 the binary (no build step, nothing loaded from the network) and follows your
 light/dark setting. The token lives in `sessionStorage`, so closing the tab
@@ -121,8 +125,10 @@ integrations:
 ### Email
 
 The `email` integration reads, searches, drafts, sends, archives and flags
-mail over IMAP and SMTP, so it works with Gmail, Fastmail, iCloud,
-Outlook.com and self-hosted servers. Enable it in `bosun.yaml` and restart
+mail over IMAP and SMTP, so it works with Gmail, iCloud, Fastmail,
+Outlook.com, Yahoo and self-hosted servers. `bosun setup` enables it (and
+`calendar`) in the generated `bosun.yaml`; with no account linked its tools
+just answer "not configured". For an older config, add it and restart
 `bosund`:
 
 ```yaml
@@ -132,13 +138,75 @@ integrations:
     poll_interval: 2m   # check INBOXes for new mail (email.received events); "off" disables
 ```
 
-Accounts are per user and stored in the credential vault. Each user links
-their own, in one of two ways:
+Accounts are per user and stored in the encrypted vault. The easy way to link
+one is the wizard (`bosun setup` offers it right after creating the admin;
+everyone else runs it after `bosun login`):
 
-**App password (any provider).** Create an app password at your provider
-(Gmail: needs 2-Step Verification, then Google Account > Security > App
-passwords; iCloud: appleid.apple.com; Fastmail: Settings > Privacy & Security;
-Outlook.com: Microsoft account > Security), then:
+```sh
+./bin/bosun connect email
+```
+
+```
+Email address: dave@icloud.com
+Provider: iCloud Mail (IMAP imap.mail.me.com:993, SMTP smtp.mail.me.com:587 STARTTLS)
+
+iCloud Mail needs an app password (your normal password will not work). To create one:
+  1. Open https://appleid.apple.com and sign in (two-factor authentication must be on).
+  2. Go to Sign-In and Security → App-Specific Passwords and click + (Generate).
+  3. Name it "Bosun" and copy the password (format xxxx-xxxx-xxxx-xxxx).
+
+App password for dave@icloud.com:            ← hidden
+Testing the connection (IMAP login and SMTP authentication)...
+Connection OK.
+Saved. Bosun can now read and send mail as dave@icloud.com (by default, sending asks you first).
+
+iCloud Calendar works with the same app password. Set up your calendar too? [Y/n]:
+Testing CalDAV at https://caldav.icloud.com...
+Saved. Bosun can now read your calendars and add or change events (by default, changes ask you first).
+```
+
+It works out the servers from your address, shows where to create an **app
+password** (a separate password just for Bosun, which you can revoke at any
+time; no Google Cloud project or OAuth setup needed), **tests the login**
+(IMAP and SMTP, through the daemon) and only then stores it. A wrong password
+gets a clear message and another try; Gmail's hint explains the 2-Step
+Verification requirement. Then it offers the calendar: with the same password
+for iCloud and Fastmail, or as a read-only feed for Gmail, Outlook.com and
+Yahoo (see [Calendar](#calendar)).
+
+| Provider | Servers | App password |
+| --- | --- | --- |
+| Gmail | `imap.gmail.com`, `smtp.gmail.com:465` | needs 2-Step Verification, then <https://myaccount.google.com/apppasswords> |
+| iCloud (`icloud.com`, `me.com`, `mac.com`) | `imap.mail.me.com`, `smtp.mail.me.com:587` | <https://appleid.apple.com> → Sign-In and Security → App-Specific Passwords |
+| Fastmail | `imap.fastmail.com`, `smtp.fastmail.com:465` | Settings → Privacy & Security → Integrations → App passwords |
+| Outlook.com / Hotmail / Live | `outlook.office365.com`, `smtp-mail.outlook.com:587` | Microsoft account → Security → App passwords (see the note below) |
+| Yahoo | `imap.mail.yahoo.com`, `smtp.mail.yahoo.com:465` | Account Security → Generate app password |
+| anything else | found by trying `imap.`/`smtp.`/`mail.<domain>`, or asked | your provider's app password, if it has them |
+
+Note on Outlook.com: Microsoft is phasing out password ("basic")
+authentication for IMAP/SMTP on personal accounts. Some accounts still accept
+an app password; if the test fails with a correct one, that account needs
+OAuth, which the email integration does not support for Microsoft yet.
+
+**Which email provider?** If you are choosing, **Fastmail** or **iCloud**
+give you mail *and* a read/write calendar with one app password and no OAuth
+setup at all. Gmail works just as easily for mail; its calendar is read-only
+through the private iCal link unless you set up OAuth.
+
+For scripts (no questions; the password comes from stdin):
+
+```sh
+pass show fastmail-bosun | ./bin/bosun connect email --user me@fastmail.com --password-stdin
+./bin/bosun connect email --user me@example.org --password-stdin \
+    --host imap.example.org --smtp-host smtp.example.org --smtp-port 587 < pw.txt
+```
+
+`--provider gmail|icloud|fastmail|outlook|yahoo|other` overrides the preset
+picked from the address, and `--imap-port` / `--smtp-port` the ports.
+
+<details><summary>Storing the credential by hand</summary>
+
+The wizard stores a `password` credential, which you can also write directly:
 
 ```sh
 ./bin/bosun credentials set email password \
@@ -152,11 +220,14 @@ Optional fields: `smtp_host` (default: `host` with `imap.` replaced by
 when the login is not an address), `name` (From display name), `save_sent`
 (`true`/`false`: file a copy of sent mail in Sent; default true, false for
 Gmail, which does it itself). Credentials are only ever sent over TLS.
+</details>
 
-**Google sign-in (Gmail).** `bosun connect google --scopes imap` (add other
-bundles as needed, e.g. `--scopes imap,calendar`) links the account with
-OAuth; email then uses XOAUTH2 against `imap.gmail.com` / `smtp.gmail.com`.
-If both are present, the Google link wins.
+**Advanced: Google sign-in (Gmail over OAuth).** `bosun connect google
+--scopes imap` (combinable, e.g. `--scopes imap,caldav`) links the account
+with OAuth; email then uses XOAUTH2 against `imap.gmail.com` /
+`smtp.gmail.com`. This needs your own Google Cloud OAuth client (see
+[Connect your Google account](#connect-your-google-account)). If both are
+present, the Google link wins.
 
 - Tools: `email.list`, `email.search` (`from:`, `to:`, `subject:"..."`,
   `since:2026-01-31`, `before:`, `unread`, `flagged`, other words match the
@@ -181,48 +252,67 @@ If both are present, the Google link wins.
 ### Calendar
 
 The `calendar` integration reads and edits each user's own calendars over
-CalDAV, so it works with Google Calendar, iCloud, Fastmail, Nextcloud,
-Radicale, Baïkal and other CalDAV servers. Enable it in `bosun.yaml` and
-restart `bosund`:
+CalDAV (iCloud, Fastmail, Google, Nextcloud, Radicale, Baïkal, ...) and
+reads any calendar that has a private iCal (ICS) link. Like `email`, it is
+enabled by `bosun setup`; for an older config:
 
 ```yaml
 integrations:
   calendar:
-    enabled: true     # backend: caldav (the only one, and the default)
+    enabled: true     # backend: caldav (the default; ICS feeds need no setting)
 ```
 
-Then each user links their own account (accounts are per user and stored in
-the vault):
+Each user links their own calendars (stored in the vault), the easy way
+first:
 
-- **Google:** `bosun connect google --scopes caldav` (combinable, e.g.
-  `--scopes imap,caldav`). CalDAV needs the full
-  `https://www.googleapis.com/auth/calendar` scope, which the `caldav` bundle
-  requests.
-- **iCloud:** create an app-specific password at appleid.apple.com (Sign-In
-  and Security → App-Specific Passwords), then
-  `bosun credentials set calendar password --field url=https://caldav.icloud.com --field user=you@icloud.com`
-  and paste it at the prompt. Your normal Apple ID password will not work.
-- **Fastmail:** an app password with CalDAV access, `--field url=https://caldav.fastmail.com`
-  and your Fastmail address as `user`.
-- **Nextcloud / Radicale / Baïkal / others:** the server root (discovered via
-  `/.well-known/caldav`) or your principal/calendar URL, e.g.
-  `--field url=https://cloud.example.com/remote.php/dav --field user=dave`
-  (use an app password where the server offers them).
-- Optional `--field calendar=Work` picks the default calendar for new events
+- **iCloud and Fastmail (read and write):** `bosun connect email` offers the
+  calendar right after the mail account, with the same app password.
+- **Google Calendar, Outlook.com, Yahoo, or any calendar with a private link
+  (read-only):**
+
+  ```sh
+  ./bin/bosun connect calendar --ics                 # hidden prompt for the link
+  ./bin/bosun connect calendar --ics --name family   # several feeds: family, work, ...
+  ```
+
+  Where to find the link: **Google Calendar** → Settings → your calendar →
+  Integrate calendar → *Secret address in iCal format*; **Outlook.com** →
+  Settings → Calendar → Shared calendars → *Publish a calendar* → ICS link;
+  **iCloud** → share the calendar as a *Public Calendar* (`webcal://` links
+  work); Yahoo → calendar → Share → ICS link. The link is a secret (anyone with
+  it can read the calendar), so it is asked for hidden and stored in the
+  vault; the daemon test-fetches it before saving. Each `--name` becomes a
+  separate calendar (`ics:<name>` credential) and `calendar.events` merges
+  them, labelled by name.
+- **Advanced, Google Calendar read and write:** `bosun connect google --scopes
+  caldav` (combinable, e.g. `--scopes imap,caldav`), which needs your own
+  Google Cloud OAuth client ([setup](#connect-your-google-account)). CalDAV
+  needs the full `https://www.googleapis.com/auth/calendar` scope, which the
+  `caldav` bundle requests.
+- **Nextcloud / Radicale / Baïkal / other CalDAV servers:**
+  `bosun credentials set calendar password --field url=https://cloud.example.com/remote.php/dav --field user=dave`
+  (the server root is discovered via `/.well-known/caldav`; paste an app
+  password where the server offers them). The same works for iCloud
+  (`url=https://caldav.icloud.com`) and Fastmail (`url=https://caldav.fastmail.com`).
+  Optional `--field calendar=Work` picks the default calendar for new events
   (otherwise the first writable one).
 
-Google is used if linked, otherwise the password account. Credentials are only
-sent over `https://` (plain `http://` is refused except to localhost), and
-only to the configured host's domain.
+If a user has several, Google OAuth is used first, then the CalDAV password
+account, then the ICS feeds. CalDAV credentials are only sent over `https://`
+(plain `http://` is refused except to localhost), and only to the configured
+host's domain. ICS feeds are fetched over `https://` only (`webcal://` is
+rewritten), never from private or loopback addresses, at most 5 MB, and
+cached per user for five minutes; their calendars are read-only, so
+`calendar.create`/`update`/`delete` explain how to link an editable account.
 
 - Tools: `calendar.calendars`, `calendar.events` (from/to as RFC 3339, a
   local time, a date, or `today`/`tomorrow`/`this week`/`next week`/`this
   month`, in `daemon.timezone` unless a `timezone` is given; recurrences
   expanded, at most 200), `calendar.get`, `calendar.freebusy` (merged busy
-  time across writable calendars), all `calendar.read`; `calendar.create` and
-  `calendar.update` (`calendar.write`, asks by default; updates use ETags and
-  fail with a conflict if the event changed meanwhile); `calendar.delete`
-  (`calendar.delete`, destructive).
+  time across your own calendars: writable ones, or the ICS feeds), all
+  `calendar.read`; `calendar.create` and `calendar.update` (`calendar.write`,
+  asks by default; updates use ETags and fail with a conflict if the event
+  changed meanwhile); `calendar.delete` (`calendar.delete`, destructive).
 - Event text is untrusted (anyone can send you an invitation), so the model
   is told never to follow instructions in it.
 - Recurrence support: DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, COUNT, UNTIL,
@@ -448,8 +538,14 @@ the file would hold a different key.
 
 ### Connect your Google account
 
-Integrations that work with your mail, calendar or tasks use an account you
-link once with `bosun connect`. A browser opens, you sign in and approve, and
+This is the advanced option. For mail and calendars, `bosun connect email`
+(app passwords) and `bosun connect calendar --ics` (private calendar links)
+need no OAuth setup at all; see [Email](#email) and [Calendar](#calendar).
+OAuth is for Google Calendar *write* access over CalDAV, Gmail without an app
+password, and Google/Microsoft APIs (Tasks, Drive, Graph).
+
+Integrations that work with your mail, calendar or tasks can use an account you
+link once with `bosun connect <provider>`. A browser opens, you sign in and approve, and
 from then on `bosund` keeps a fresh access token for you (refreshed
 automatically; the tokens are encrypted in the vault like any credential).
 

@@ -338,6 +338,46 @@ Response `200`:
   server; `state` is `ready`, `failed` (never connected), `exited` (the stdio
   process went away; calls fail until bosund restarts) or `closed`.
 
+### `POST /v1/integrations/{name}/test`
+
+Tries a credential against the integration's backend **without storing it**,
+so a wizard can check an app password before saving it with
+`PUT /v1/credentials/{integration}/{kind}`. Only integrations that implement
+the optional `integration.CredentialTester` interface support it (`email`,
+`calendar`).
+
+Request (the same shape as a credential, plus its kind):
+
+```json
+{"kind": "password", "secret": "<app password>",
+ "fields": {"host": "imap.fastmail.com", "user": "me@fastmail.com"}}
+```
+
+Response `200`, whether or not the credential works:
+
+```json
+{"ok": true}
+{"ok": false, "error": "wrong password or login refused: imap.gmail.com rejected the login for dave@gmail.com (server said: [AUTHENTICATIONFAILED] Invalid credentials). Gmail only accepts an app password here, ..."}
+```
+
+- `email`, kind `password`: logs in over IMAP, then authenticates to the
+  SMTP submission server (EHLO, STARTTLS where used, AUTH, QUIT); nothing is
+  sent. Errors distinguish a refused login (with a provider hint: Gmail's
+  2-Step Verification requirement, Microsoft's basic-auth retirement), an
+  unreachable server, and SMTP refusing a login IMAP accepted.
+- `calendar`, kind `password`: CalDAV discovery must find at least one
+  calendar. Kinds `ics` / `ics:<name>`: the secret is the feed URL; it must be
+  `https://` (or `webcal://`), resolve to a public address, be at most 5 MB
+  and parse as iCalendar.
+- The secret is never logged or audited (the log line has user, integration,
+  kind and outcome only) and is replaced by `[redacted]` if it appears in the
+  error text.
+- Rate limit: 5 tests per minute per user (`429 rate_limited` with
+  `Retry-After`), so the endpoint cannot be used to guess passwords.
+- Errors: `404 not_found` (integration not enabled), `400 bad_request`
+  (integration cannot test credentials, undeclared kind, missing secret,
+  invalid fields).
+
 ### `GET /v1/hooks` (admin only)
 
 The registered hooks, keyed by hook point, each list in run order. Every
