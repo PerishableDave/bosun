@@ -111,6 +111,8 @@ type Server struct {
 
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
+
+	credTests *rateLimiter // POST /v1/integrations/{name}/test, per user
 }
 
 // New returns a Server. Auth and Bus are required.
@@ -125,6 +127,7 @@ func New(o Options) (*Server, error) {
 	s.creds = o.Credentials
 	s.oauth = o.OAuth
 	s.channels = o.Channels
+	s.credTests = newRateLimiter(CredentialTestsPerMinute, time.Minute)
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -162,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /v1/policy/{capability}", authed(s.handleDeletePolicyRule))
 	mux.Handle("GET /v1/tools", authed(s.handleListTools))
 	mux.Handle("GET /v1/integrations", authed(s.handleListIntegrations))
+	mux.Handle("POST /v1/integrations/{name}/test", authed(s.handleTestCredential))
 	mux.Handle("GET /v1/hooks", authed(s.handleListHooks))
 	mux.Handle("GET /v1/memory", authed(s.handleListMemories))
 	mux.Handle("POST /v1/memory", authed(s.handleCreateMemory))
