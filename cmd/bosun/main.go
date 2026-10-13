@@ -37,7 +37,7 @@ func newRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&g.configPath, "config", config.DefaultPath(), "path to bosun.yaml (env BOSUN_CONFIG)")
 	root.PersistentFlags().StringVar(&g.server, "server", "", "daemon base URL (default derived from config daemon.listen)")
-	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g))
+	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g))
 	return root
 }
 
@@ -60,14 +60,4 @@ func (g *globals) baseURL() (string, error) {
 		return "", err
 	}
 	return cfg.BaseURL(), nil
-}
-
-func newChatCmd(g *globals) *cobra.Command {
-	return &cobra.Command{
-		Use:   "chat",
-		Short: "Chat with your assistant (not implemented yet)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("chat is not implemented yet")
-		},
-	}
 }
