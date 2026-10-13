@@ -299,6 +299,23 @@ them, are off by default, and are admin-only to configure.
 | `pre_model_call` | assembled request | redact, rewrite system prompt |
 | `on_approval` | approval, decision | notify external channel |
 
+- Hooks run in registration order; built-ins first, then script hooks in
+  config order. A hook error fails closed: `pre_tool_call` stops the call,
+  `post_tool_call` withholds the result, `pre_model_call` fails the turn.
+  `on_approval` hooks are notifications: they run in the background after the
+  approval is resolved, expired, or canceled, and their failures are only
+  logged and audited.
+- `pre_model_call` hooks rewrite a copy of the request: the conversation
+  history and the audit log keep the original content. The built-in
+  `builtin.redact_secrets` (on by default) masks credential-looking strings.
+  Memory-extraction model calls do not run hooks.
+- Script hooks are config-only (`hooks.script_hooks`), require
+  `enabled: true`, take an absolute executable path (no shell), run with only
+  `PATH` and `HOME` in the environment and a timeout (default 5s), and speak
+  JSON on stdin/stdout. Timeouts, non-zero exits, and invalid output count as
+  hook errors and are audited (`kind = hook`). `GET /v1/hooks` lists what is
+  registered (admin only).
+
 ## Routines
 
 A routine is a named prompt plus a trigger, owned by a user and run as that user.

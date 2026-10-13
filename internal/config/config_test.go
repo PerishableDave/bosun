@@ -226,3 +226,52 @@ func TestWebUIFlag(t *testing.T) {
 		t.Fatalf("web_ui false: err=%v", err)
 	}
 }
+
+func TestHooksConfig(t *testing.T) {
+	cfg, err := Parse([]byte(""))
+	if err != nil || !cfg.Hooks.RedactSecretsEnabled() || cfg.Hooks.ScriptHooks.Enabled {
+		t.Fatalf("defaults: %+v, %v", cfg.Hooks, err)
+	}
+	cfg, err = Parse([]byte(`
+hooks:
+  redact_secrets: false
+  script_hooks:
+    enabled: true
+    scripts:
+      - point: pre_tool_call
+        command: ["/usr/local/bin/bosun-redact", "--strict"]
+        match: "email.*"
+      - point: on_approval
+        name: notify
+        command: ["/bin/notify"]
+        timeout: 2s
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Hooks.ScriptHooks.Scripts
+	if cfg.Hooks.RedactSecretsEnabled() || len(s) != 2 || s[0].Timeout != DefaultScriptHookTimeout ||
+		s[0].Match != "email.*" || s[1].Timeout.Seconds() != 2 || s[1].Name != "notify" {
+		t.Errorf("hooks = %+v", cfg.Hooks)
+	}
+	for name, bad := range map[string]string{
+		"bad point":        `{point: on_schedule, command: [/bin/x]}`,
+		"no command":       `{point: pre_tool_call}`,
+		"relative":         `{point: pre_tool_call, command: [x]}`,
+		"long timeout":     `{point: pre_tool_call, command: [/bin/x], timeout: 2m}`,
+		"match on model":   `{point: pre_model_call, command: [/bin/x], match: "a*"}`,
+		"bad glob":         `{point: pre_tool_call, command: [/bin/x], match: "[a"}`,
+		"bad name":         `{point: pre_tool_call, command: [/bin/x], name: "A B"}`,
+		"unknown field":    `{point: pre_tool_call, command: [/bin/x], env: {}}`,
+		"negative timeout": `{point: pre_tool_call, command: [/bin/x], timeout: -1s}`,
+	} {
+		y := "hooks: { script_hooks: { scripts: [ " + bad + " ] } }"
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: accepted %s", name, y)
+		}
+	}
+	dup := "hooks: { script_hooks: { scripts: [ {point: on_approval, command: [/bin/x], name: a}, {point: on_approval, command: [/bin/y], name: a} ] } }"
+	if _, err := Parse([]byte(dup)); err == nil {
+		t.Error("duplicate names accepted")
+	}
+}

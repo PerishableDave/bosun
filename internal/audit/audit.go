@@ -22,6 +22,7 @@ const (
 	KindOutbound   Kind = "outbound"    // another outbound network call
 	KindAuth       Kind = "auth"        // login, logout, user/role changes
 	KindConfig     Kind = "config"      // policy rule or integration changes
+	KindHook       Kind = "hook"        // a hook failed (script hooks record their failures)
 )
 
 // Entry is one audit record.

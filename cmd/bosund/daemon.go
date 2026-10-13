@@ -25,6 +25,7 @@ import (
 	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/integrations/mcp"
+	"github.com/dperedo/bosun/internal/integrations/notes"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/llm/providers"
@@ -43,6 +44,7 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
+	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
@@ -157,10 +159,16 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	log.Info("policy rules seeded from config", "created", rep.Created, "unchanged", rep.Unchanged,
 		"kept_db_value", rep.Kept, "missing_users", strings.Join(rep.MissingUsers, ","))
 
+	// Hooks.
+	hk, err := buildHooks(cfg, auditLog, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Approvals.
 	d.bus = events.NewBus()
 	appr := approval.NewManager(d.store, d.bus, approval.Options{
-		Timeout: cfg.Policy.ApprovalTimeout, Audit: auditLog, Log: log,
+		Timeout: cfg.Policy.ApprovalTimeout, Audit: auditLog, Log: log, OnResolve: onApprovalHooks(hk),
 	})
 	n, err := appr.ExpireStale(ctx)
 	if err != nil {
@@ -175,9 +183,9 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	go sweepSessions(ctx, d.store, log)
 
 	// Dispatcher and agent.
-	d.hooks = hooks.NewRegistry()
-	disp := dispatch.New(tools, engine, appr, auditLog, d.hooks, d.bus, dispatch.WithLogger(log))
-	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx)}
+	d.hooks = hk
+	disp := dispatch.New(tools, engine, appr, auditLog, hk, d.bus, dispatch.WithLogger(log))
+	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx), agent.WithHooks(hk)}
 	mem := memory.NewStore(d.store)
 	if cfg.Memory.IsEnabled() {
 		extProv, extModel, err := llms.Resolve(cfg.ExtractModelRef())
@@ -207,6 +215,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Tools: tools, Audit: auditLog, Memories: mem, WebUI: webHandler,
 		Integrations: func() []integration.Integration { return initialised },
 		Routines:     routines.Service{Store: d.routines, Scheduler: d.sched},
+		Hooks:        hk,
 	})
 	if err != nil {
 		return nil, err
@@ -233,9 +242,23 @@ func (d *daemon) enabledIntegrations(dp deps) []integration.Integration {
 			d.log.Warn("integration enabled in config is not available in this build; skipping", "integration", name)
 			continue
 		}
-		out = append(out, mk(d.log))
+		in := mk(d.log)
+		if n, ok := in.(*notes.Integration); ok {
+			n.SetUserDirFunc(d.username) // per-user notes live in <dir>/<username>/
+		}
+		out = append(out, in)
 	}
 	return append(out, dp.Integrations...)
+}
+
+// username returns a user's username (immutable and path-safe; see
+// auth.ValidateUsername).
+func (d *daemon) username(ctx context.Context, userID int64) (string, error) {
+	u, err := d.store.GetUser(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
 }
 
 func (d *daemon) initIntegration(ctx context.Context, reg *integration.Registry, vlt *vault.Vault, in integration.Integration) error {

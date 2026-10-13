@@ -37,7 +37,7 @@ All errors use one envelope:
 | 400 | `bad_request` | Malformed JSON, unknown field, or invalid value |
 | 401 | `unauthorized` | Missing/invalid/expired bearer token |
 | 401 | `invalid_credentials` | Login failed (username or password wrong; deliberately indistinguishable) |
-| 403 | `forbidden` | Answering an approval that belongs to another user |
+| 403 | `forbidden` | Answering an approval that belongs to another user, or a non-admin calling an admin-only endpoint |
 | 404 | `not_found` | No such endpoint or resource (or not yours) |
 | 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired, or a turn already running |
 | 500 | `internal` | Server error (details are logged, never returned) |
@@ -335,6 +335,37 @@ Response `200`:
   commands, URLs and error text). For `mcp` it is one entry per configured
   server; `state` is `ready`, `failed` (never connected), `exited` (the stdio
   process went away; calls fail until bosund restarts) or `closed`.
+
+### `GET /v1/hooks` (admin only)
+
+The registered hooks, keyed by hook point, each list in run order. Every
+runnable point is present (possibly empty). Members get `403 forbidden`.
+
+Response `200`:
+
+```json
+{
+  "hooks": {
+    "pre_model_call": [
+      {"name": "builtin.redact_secrets", "type": "go"},
+      {"name": "script-1-bosun-scrub", "type": "script"}
+    ],
+    "pre_tool_call": [],
+    "post_tool_call": [],
+    "on_approval": [{"name": "notify", "type": "script"}]
+  }
+}
+```
+
+- `type` is `go` (compiled in) or `script` (an admin-configured executable under
+  `hooks.script_hooks` in `bosun.yaml`; listed only when
+  `hooks.script_hooks.enabled` is true). There is no API to add, change, or
+  enable hooks: they are configuration only.
+- A failing `pre_tool_call` hook stops the tool call; a failing
+  `post_tool_call` hook withholds the result; a failing `pre_model_call` hook
+  fails the turn (the stream ends with an `error` event whose message starts
+  `blocked by pre_model_call hook`). Script hook failures are recorded in the
+  audit log with `kind = hook`.
 
 ### `GET /v1/memory`
 

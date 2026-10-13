@@ -12,6 +12,7 @@ import (
 	"github.com/dperedo/bosun/internal/api/events"
 	"github.com/dperedo/bosun/internal/approval"
 	"github.com/dperedo/bosun/internal/dispatch"
+	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/llm/fake"
@@ -127,6 +128,58 @@ func TestTextTurn(t *testing.T) {
 	}
 	if req := e.llm.Requests()[0]; req.Model != "m" || req.System != SystemPrompt || len(req.Tools) != 1 || req.Tools[0].Name != "w__write" {
 		t.Errorf("request = %+v", req)
+	}
+}
+
+func TestPreModelCallHook(t *testing.T) {
+	hk := hooks.NewRegistry()
+	var sawUser int64
+	if err := hk.AddPreModelCall("rewrite", func(ctx context.Context, req *llm.Request) error {
+		sawUser, _ = hooks.UserIDFromContext(ctx)
+		req.System += "\nEXTRA"
+		for i := range req.Messages {
+			for j := range req.Messages[i].Content {
+				req.Messages[i].Content[j].Text = strings.ReplaceAll(req.Messages[i].Content[j].Text, "secret", "[x]")
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, WithHooks(hk))
+	e.llm.Push(fake.Text("ok"))
+	if err := e.a.Run(context.Background(), e.user, e.conv, "my secret"); err != nil {
+		t.Fatal(err)
+	}
+	req := e.llm.Requests()[0]
+	if !strings.HasSuffix(req.System, "\nEXTRA") || req.Messages[0].Text() != "my [x]" || sawUser != e.user {
+		t.Errorf("request = %+v, user %d", req, sawUser)
+	}
+	// The stored history is untouched.
+	ms, err := e.st.ListMessages(context.Background(), e.conv)
+	if err != nil || !strings.Contains(string(ms[0].Content), "my secret") {
+		t.Errorf("stored = %s, %v", ms[0].Content, err)
+	}
+}
+
+func TestPreModelCallHookFailureFailsTurn(t *testing.T) {
+	hk := hooks.NewRegistry()
+	_ = hk.AddPreModelCall("veto", func(context.Context, *llm.Request) error { return errors.New("nope") })
+	e := newEnv(t, WithHooks(hk))
+	sub := e.bus.Subscribe(e.user, 0)
+	defer sub.Close()
+	e.llm.Push(fake.Text("never"))
+	err := e.a.Run(context.Background(), e.user, e.conv, "hi")
+	if !errors.Is(err, hooks.ErrHook) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(e.llm.Requests()) != 0 {
+		t.Error("model was called")
+	}
+	evs := collect(sub)
+	last := evs[len(evs)-1]
+	if last.Type != events.TypeError || !strings.Contains(last.Data.(events.ErrorData).Message, "pre_model_call veto: nope") {
+		t.Errorf("last event = %+v", last)
 	}
 }
 

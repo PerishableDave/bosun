@@ -38,13 +38,7 @@ func ValidEventName(name string) bool {
 
 // OnEvent registers an on_event handler under a unique hook name.
 func (r *Registry) OnEvent(name string, fn EventHandler) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := checkName(name, fn == nil, r.names()); err != nil {
-		return err
-	}
-	r.events = append(r.events, Named[EventHandler]{name, fn})
-	return nil
+	return r.add(PointOnEvent, name, fn == nil, nil, func() { r.events = append(r.events, Named[EventHandler]{name, fn}) })
 }
 
 // EventHandlers returns the on_event handlers in registration order.

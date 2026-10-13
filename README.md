@@ -9,11 +9,12 @@ the how. The HTTP API is documented in [docs/API.md](docs/API.md).
 ## Status
 
 MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
-policy, approvals, an audit log, and an encrypted credential vault. The only
-built-in integration so far is `websearch` (`websearch.fetch` for public web
-pages; `websearch.search` needs a SearXNG instance), per-user memory, the MCP
-bridge (third-party tools from external MCP servers), routines (scheduled and
-event-driven runs), and the web UI. Calendar, email, and notes are not built yet.
+policy, approvals, an audit log, hooks, and an encrypted credential vault.
+Built-in integrations so far are `websearch` (`websearch.fetch` for public web
+pages; `websearch.search` needs a SearXNG instance) and `notes` (Markdown
+files, off by default), plus per-user memory, the MCP bridge (third-party
+tools from external MCP servers), routines (scheduled and event-driven runs),
+and the web UI. Calendar and email are not built yet.
 
 ## Quick start
 
@@ -90,6 +91,79 @@ each user and fully editable:
 Configure it under `memory:` in `bosun.yaml` (all optional):
 `enabled: true`, `extract_model: ""` (empty = `llm.default`; a small, cheap
 model is a good choice), `recall_limit: 8`.
+
+### Notes
+
+The `notes` integration lets the assistant list, search, read, write, append
+to, and delete Markdown/text notes (`.md`, `.markdown`, `.txt`) in a folder.
+`bosun setup` leaves it off; enable it in `bosun.yaml` and restart `bosund`:
+
+```yaml
+integrations:
+  notes:
+    enabled: true
+    dir: ~/Notes        # default: <data_dir>/integrations/notes
+    per_user: true      # default: each user's notes live in ~/Notes/<username>/
+```
+
+- Capabilities: `notes.read` (list/search/read; read risk), `notes.write`
+  (write/append; write risk, asks by default), `notes.delete` (destructive).
+- With `per_user: true` users never see each other's notes. With
+  `per_user: false` everyone shares `dir`, and note contents are treated as
+  untrusted data (another household member could have written instructions
+  into a note).
+- Paths are relative to the notes folder. Absolute paths, `..`, hidden
+  files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
+  point outside the folder are refused. Reads return at most 200 KB.
+
+### Hooks
+
+Hooks run at fixed points of every request: `pre_model_call` (before each
+model request; may rewrite the system prompt and messages), `pre_tool_call`
+(may rewrite arguments or cancel), `post_tool_call` (may rewrite the result)
+and `on_approval` (notification after an approval is answered, expires, or is
+canceled). `bosun hooks list` (admin) shows what is registered.
+
+One built-in hook is on by default: `builtin.redact_secrets` masks strings
+that look like API keys or tokens (`sk-ant-…`, `ghp_…`, `xoxb-…`, `AKIA…`,
+JWTs, runs of 32+ hex digits) in what is sent to the model. The stored
+conversation keeps the original. Turn it off with `hooks.redact_secrets: false`.
+
+**Script hooks** run an executable you provide. They are the one place Bosun
+runs an external program on your behalf, so they are off by default and only
+configurable in `bosun.yaml` (no API), and `bosund` logs each one at WARN
+level on startup:
+
+```yaml
+hooks:
+  script_hooks:
+    enabled: false                 # must be true for any script to run
+    scripts:
+      - point: pre_tool_call       # pre_tool_call | post_tool_call | pre_model_call | on_approval
+        command: ["/usr/local/bin/bosun-guard", "--strict"]   # absolute path; no shell
+        timeout: 5s                # default 5s, max 60s
+        match: "email.*"           # optional glob on tool or capability (tool points only)
+        name: guard                # optional; default script-<n>-<command>
+```
+
+The script gets one JSON object on stdin (`point`, `user_id`, `tool`,
+`integration`, `capability`, `risk`, `tool_call_id`, `args`; plus `result`
+`{content, untrusted}` for post_tool_call, `model`/`system`/`messages` for
+pre_model_call, `approval`/`decision` for on_approval) and must print one JSON
+object on stdout:
+
+| Point | Output |
+|---|---|
+| `pre_tool_call` | `{"action": "continue" \| "cancel", "args": {...}, "reason": "..."}` (`args` optional; rewritten args are validated and checked by policy) |
+| `post_tool_call` | `{"result": "replacement content"}` or `{}` |
+| `pre_model_call` | `{"system": "...", "messages": [...]}`, both optional, or `{}` |
+| `on_approval` | ignored |
+
+A non-zero exit, a timeout, or invalid JSON **fails closed**: the tool call is
+not run, its result is withheld, or the turn fails; on_approval failures are
+only logged. Every failure is recorded in the audit log (`kind = hook`).
+Scripts get only `PATH` and `HOME` in their environment (no API keys), run in
+bosund's working directory, and run with bosund's privileges.
 
 ### MCP servers
 

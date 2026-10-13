@@ -312,3 +312,58 @@ func TestRequestValidation(t *testing.T) {
 		t.Error("bad risk accepted")
 	}
 }
+
+func TestOnResolve(t *testing.T) {
+	f := setup(t, time.Minute)
+	type call struct {
+		id string
+		d  Decision
+	}
+	var mu sync.Mutex
+	var got []call
+	f.m.onRes = func(_ context.Context, a Approval, d Decision) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, call{a.ID, d})
+		if d == Deny {
+			panic("hook bug") // must be recovered
+		}
+	}
+	ctx := context.Background()
+
+	approved := f.request(t, 0)
+	if err := f.m.Resolve(ctx, approved.ID, f.alice, Approve); err != nil {
+		t.Fatal(err)
+	}
+	denied := f.request(t, 0)
+	if err := f.m.Resolve(ctx, denied.ID, f.alice, Deny); err != nil {
+		t.Fatal(err)
+	}
+	// A rejected second answer does not notify.
+	if err := f.m.Resolve(ctx, denied.ID, f.alice, Approve); !errors.Is(err, ErrAlreadyResolved) {
+		t.Fatalf("second resolve = %v", err)
+	}
+	expired := f.request(t, time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
+	if _, err := f.m.ExpireStale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	canceled := f.request(t, 0)
+	cctx, stop := context.WithCancel(ctx)
+	stop()
+	if _, err := f.m.Wait(cctx, canceled.ID); err == nil {
+		t.Fatal("wait on canceled ctx succeeded")
+	}
+
+	want := []call{{approved.ID, Approve}, {denied.ID, Deny}, {expired.ID, DecisionExpired}, {canceled.ID, DecisionCanceled}}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != len(want) {
+		t.Fatalf("OnResolve calls = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("call %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
