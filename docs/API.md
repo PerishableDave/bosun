@@ -1,8 +1,10 @@
 # Bosun HTTP API (v1)
 
 `bosund` serves a JSON + Server-Sent Events API, by default on
-`http://127.0.0.1:7777`. LAN binding requires TLS. The `bosun` CLI and the web
-UI are clients of this API.
+`http://127.0.0.1:7777`. LAN binding requires TLS (`bosun setup --lan`
+generates a self-signed certificate; `bosund` logs its SHA-256 fingerprint at
+startup so clients can pin it). The `bosun` CLI and the web UI are clients of
+this API.
 
 All endpoints below are implemented. An endpoint whose backing component is
 not configured on a given server (only possible when embedding `api.Server`
@@ -37,7 +39,7 @@ All errors use one envelope:
 | 400 | `bad_request` | Malformed JSON, unknown field, or invalid value |
 | 401 | `unauthorized` | Missing/invalid/expired bearer token |
 | 401 | `invalid_credentials` | Login failed (username or password wrong; deliberately indistinguishable) |
-| 403 | `forbidden` | Answering an approval that belongs to another user |
+| 403 | `forbidden` | Answering an approval that belongs to another user, or a member managing a shared credential |
 | 404 | `not_found` | No such endpoint or resource (or not yours) |
 | 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired, or a turn already running |
 | 500 | `internal` | Server error (details are logged, never returned) |
@@ -407,6 +409,72 @@ belongs to another user).
 Deletes one of the caller's memories. Response `204 No Content`.
 
 Errors: `404` (no such memory, or it belongs to another user).
+
+### `GET /v1/credentials`
+
+Metadata for the credentials in the vault that the caller can use: their own
+(`scope: "user"`) and the household-wide shared ones (`scope: "shared"`,
+visible to every user so members can see whether a shared integration is
+configured). Secrets and field values are never returned. Optional query:
+`integration=<name>`.
+
+```json
+{ "credentials": [
+  { "integration": "email", "kind": "oauth2:google", "scope": "user",
+    "expiry": "2027-01-31T00:00:00Z",
+    "created_at": "2026-10-12T22:00:00Z", "updated_at": "2026-10-12T22:00:00Z" },
+  { "integration": "mcp", "kind": "bearer:github", "scope": "shared",
+    "created_at": "2026-10-12T22:00:00Z", "updated_at": "2026-10-12T22:00:00Z" }
+] }
+```
+
+`expiry` is omitted when the credential does not expire. Sorted by
+integration, kind, then user before shared.
+
+### `PUT /v1/credentials/{integration}/{kind}`
+
+Creates or replaces a credential, encrypted with the daemon master key.
+
+```json
+{ "secret": "ghp_…", "fields": { "username": "dave" }, "expiry": "2027-01-31T00:00:00Z" }
+```
+
+- `secret` (required, at most 64 KiB) is the API key, token or password.
+- `fields` (optional, at most 32) are extra values the integration needs;
+  names match `^[a-z][a-z0-9_]*$`, values at most 8 KiB.
+- `expiry` (optional, RFC 3339) must be in the future.
+- `integration` must be an initialised integration (`GET /v1/integrations`);
+  otherwise `404`.
+- `kind` must be one the integration declares in its manifest, or
+  `<declared>:<suffix>` for a declared kind without a suffix (an integration
+  declaring `bearer` accepts `bearer:github`). The MCP bridge declares the
+  kinds named by its servers' `credential:` settings, e.g. `bearer:github`.
+  Otherwise `400`.
+- **Scope** (`?scope=user|shared`): per-user integrations store the caller's
+  own credential; `scope=shared` is rejected for them (`400`), because they
+  never read shared credentials. Shared integrations (`scope: "shared"` in
+  `GET /v1/integrations`, e.g. `mcp`, `websearch`) only use the shared
+  credential, so the scope defaults to `shared` for them and `scope=user` is
+  rejected (`400`). Shared credentials can only be written by an admin
+  (`403 forbidden` otherwise).
+
+Response `200`: the credential's metadata, as in the list. Each write is
+recorded in the audit log as kind `config` with the integration, kind, scope
+and field *names* in `detail`, never the secret or field values.
+
+Integrations that connect at startup (MCP servers) use a new credential after
+`bosund` restarts.
+
+### `DELETE /v1/credentials/{integration}/{kind}`
+
+Deletes a credential, with the same scope rules as `PUT` (shared credentials
+are admin-only). The integration does not have to be enabled any more, so
+stale credentials can be removed; for an unknown integration the scope is
+taken from `?scope=` (default `user`). Response `204 No Content`; audited like
+`PUT`.
+
+Errors: `403` (member deleting a shared credential), `404` (no such
+credential).
 
 ---
 

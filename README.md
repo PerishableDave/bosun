@@ -24,8 +24,9 @@ make build                    # builds bin/bosund and bin/bosun
 ./bin/bosun setup             # writes ~/.bosun/bosun.yaml, creates the data dir and the first admin
 ```
 
-`bosun setup` prompts for the listen address, data directory, admin username
-and password; `--listen`, `--data-dir` and `--admin` skip those prompts. Use
+`bosun setup` prompts for LAN access, the listen address, data directory, admin
+username and password; `--lan`, `--listen`, `--data-dir` and `--admin` skip
+those prompts (see [LAN](#using-bosun-from-other-devices-lan)). Use
 `--config <path>` (or `BOSUN_CONFIG`) on every command to keep the config
 elsewhere.
 
@@ -123,11 +124,90 @@ integrations:
 - A server that fails to start is skipped, not fatal. `bosun mcp status` shows
   each server's state, tool count and error (details are admin-only). A stdio
   server that exits is not restarted until `bosund` restarts.
-- HTTP bearer tokens come from the credential vault (shared credential for
-  integration `mcp`, the configured kind). There is no CLI for writing vault
-  credentials yet.
+- HTTP bearer tokens come from the credential vault: the shared credential
+  for integration `mcp` with the configured kind. An admin stores it with
+  `bosun credentials set mcp bearer:github` (see [Credentials](#credentials))
+  and restarts `bosund`.
 - MCP servers are third-party code running with your user's privileges; only
   configure servers you trust.
+
+### Credentials
+
+Integration secrets (API keys, tokens) live in the daemon's encrypted vault.
+Credentials are per user, except for shared integrations (`mcp`, `websearch`:
+one household-wide backend), which use a single shared credential that only an
+admin can set.
+
+```sh
+pass show github-token | ./bin/bosun credentials set mcp bearer:github   # secret from stdin
+./bin/bosun credentials set mcp bearer:notion                             # hidden prompt
+./bin/bosun credentials list                    # metadata only, never secrets
+./bin/bosun credentials remove mcp bearer:notion
+```
+
+The secret is read from stdin or a hidden prompt, never from a flag, so it
+does not end up in shell history or the process table. For shared
+integrations `--shared` is implied (and said so); `--shared` on a per-user
+integration is an error. `--field key=value` adds non-secret extra values and
+`--expires` an RFC 3339 expiry. The kinds an integration accepts are the ones it
+declares; for MCP, the `credential:` value of a server (`bearer` or
+`bearer:<suffix>`). Every change is audited without the secret.
+
+**Master key.** Credentials are encrypted (AES-256-GCM) under a master key
+chosen by `daemon.master_key` in `bosun.yaml`:
+
+- `auto` (default): the OS keychain if available (macOS Keychain via
+  `security`; on Linux the Secret Service via `secret-tool`), else
+  `<data_dir>/master.key` (mode 0600).
+- `keychain`: the OS keychain, or fail to start.
+- `file`: `<data_dir>/master.key` only.
+
+`bosund` logs which one it uses at startup. When the keychain is used and a
+`master.key` file already exists, its key is imported into the keychain and
+the file is **left in place** (with a log notice): delete it yourself once the
+daemon has started with the keychain, since anyone who can read it can decrypt
+the vault. Do not switch to `file` after a key was generated in the keychain:
+the file would hold a different key.
+
+### Using Bosun from other devices (LAN)
+
+By default `bosund` listens on `127.0.0.1` only. To reach it from your phone or
+another computer, enable LAN mode, which always uses HTTPS:
+
+```sh
+./bin/bosun setup --lan    # or answer "y" to "Allow other devices…" in an interactive setup
+```
+
+This sets `daemon.listen: 0.0.0.0:7777`, `daemon.tls.enabled: true`, and
+generates a self-signed ECDSA P-256 certificate (valid 10 years) in
+`<data_dir>/tls/` (`cert.pem`, `key.pem` with mode 0600) for this machine's
+hostname, `localhost`, and its current IPv4 addresses. To use your own
+certificate instead, set `daemon.tls.cert_file` and `daemon.tls.key_file`. If
+the machine's IP changes, `bosun setup --lan --regenerate-cert` makes a new one.
+
+`bosun setup` and `bosund` (at every start) print the certificate's SHA-256
+fingerprint:
+
+```
+TLS certificate sha256_fingerprint=3A:7F:…:C2 names=myhost,localhost,127.0.0.1,::1,192.168.1.20
+```
+
+On the other device, check that the fingerprint matches what the daemon
+printed (read it on the daemon's machine, not over the network you are
+verifying), then pin it:
+
+```sh
+bosun --server https://myhost:7777 --insecure-fingerprint 3A:7F:…:C2 login
+bosun chat "hello"         # later commands reuse the server and the pin
+```
+
+The pin accepts exactly that certificate and nothing else; there is no
+"skip verification" option. If you trust the certificate another way, use
+`--ca-file cert.pem` instead. The server and pin are saved in
+`<data_dir>/cli-server.json` next to the CLI token. Browsers will warn about
+the self-signed certificate; compare the fingerprint in the certificate viewer
+before accepting it. On the daemon's own machine the CLI trusts
+`daemon.tls.cert_file` automatically.
 
 ### Audit log
 
