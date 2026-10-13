@@ -42,6 +42,7 @@ All errors use one envelope:
 | 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired, or a turn already running |
 | 500 | `internal` | Server error (details are logged, never returned) |
 | 501 | `not_implemented` | The endpoint's component is not configured on this server |
+| 503 | `unavailable` | The daemon is shutting down (e.g. starting a routine run during shutdown) |
 
 ### User object
 
@@ -408,6 +409,139 @@ Deletes one of the caller's memories. Response `204 No Content`.
 
 Errors: `404` (no such memory, or it belongs to another user).
 
+### Routines
+
+A routine is a named prompt the agent runs **as its owner** on a trigger:
+a cron schedule or an event. Runs go through exactly the same policy as
+interactive turns; a tool call that needs approval produces the usual
+`approval_required` event and the run waits for the answer (or the approval
+timeout). Each run gets a new conversation titled `routine: <name>`, readable
+with `GET /v1/conversations/{id}`; when it ends the owner's clients receive a
+`routine_finished` event.
+
+Routine IDs and run IDs are integers. All routine endpoints are scoped to the
+caller; another user's routine is `404`.
+
+Routine object:
+
+```json
+{
+  "id": 4,
+  "name": "morning-brief",
+  "prompt": "Summarize today's calendar.",
+  "trigger": { "cron": "0 7 * * 1-5" },
+  "model": "anthropic/claude-haiku-5-5",
+  "deliver": ["web", "cli"],
+  "enabled": true,
+  "next_run_at": "2026-10-13T05:00:00Z",
+  "last_run_at": "2026-10-12T05:00:00Z",
+  "created_at": "2026-10-01T09:00:00Z",
+  "updated_at": "2026-10-01T09:00:00Z"
+}
+```
+
+- `trigger` has exactly one of `cron` or `event`.
+  - `cron`: five fields `minute hour day-of-month month day-of-week` with
+    `*`, lists (`1,15`), ranges (`1-5`), steps (`*/15`, `8-18/2`), month and
+    weekday names (`JAN`, `MON-FRI`; 0 and 7 are Sunday), or one of
+    `@hourly`, `@daily` (`@midnight`), `@weekly`, `@monthly`, `@yearly`
+    (`@annually`). When both day fields are restricted, either may match.
+    Schedules are evaluated in the daemon's `daemon.timezone` (default: the
+    system zone). On a DST spring-forward, a time inside the skipped hour
+    fires once at the end of the gap; on fall-back, a repeated time fires
+    once. If the daemon was down when a run was due, the routine runs once
+    at startup (not once per missed time).
+  - `event`: dotted lower-case name such as `email.received`. The event's
+    data is appended to the prompt as a delimited untrusted-data block, and
+    memory extraction is skipped for such runs.
+- `model` (optional) overrides `llm.default` as `<provider>/<model>`; an
+  unknown provider fails the run with `model not available: …`.
+- `deliver`: `web` and/or `cli` (default both). In v1 both mean the reply is
+  stored in the run and its conversation and announced with
+  `routine_finished`.
+- `next_run_at` is present only for enabled cron routines; `last_run_at` only
+  after a run.
+
+Run object:
+
+```json
+{
+  "id": 9,
+  "routine_id": 4,
+  "status": "done",
+  "source": "schedule",
+  "conversation_id": "conv_3f…",
+  "scheduled_for": "2026-10-12T05:00:00Z",
+  "started_at": "2026-10-12T05:00:01Z",
+  "finished_at": "2026-10-12T05:00:09Z",
+  "reply": "You have two meetings today…"
+}
+```
+
+`status` is `running`, `waiting_approval` (blocked on an approval),
+`done`, `error` (with `error`), or `canceled` (the daemon shut down
+mid-run). `source` is `schedule`, `event` (with `event`), or `manual`.
+`reply` is the run's final assistant text.
+
+#### `GET /v1/routines`
+
+Response `200`: `{"routines": [<routine>, …]}` ordered by name.
+
+#### `POST /v1/routines`
+
+```json
+{
+  "name": "morning-brief",
+  "prompt": "Summarize today's calendar.",
+  "trigger": { "cron": "0 7 * * 1-5" },
+  "model": "",
+  "deliver": ["web"],
+  "enabled": true
+}
+```
+
+`name` (≤ 100 bytes, unique per user), `prompt` (≤ 16 KiB) and `trigger` are
+required; `enabled` defaults to `true`. Response `201`: the routine.
+
+Errors: `400` (invalid field; a cron error says which field is wrong, e.g.
+`trigger: cron: hour field "25": value 25 out of range 0-23`), `409` (name
+already used).
+
+#### `GET /v1/routines/{id}`
+
+Response `200`: the routine. Errors: `404`.
+
+#### `PUT /v1/routines/{id}`
+
+Partial update: omitted fields are kept. `trigger` replaces the whole trigger;
+`"model": ""` clears the override; `"enabled": false` disables. The next run
+time is recomputed from now, so re-enabling never fires for times that passed
+while disabled.
+
+```json
+{ "trigger": { "cron": "@hourly" }, "enabled": false }
+```
+
+Response `200`: the routine. Errors: `400`, `404`, `409` (name taken).
+
+#### `DELETE /v1/routines/{id}`
+
+Deletes the routine and its run history (its conversations are kept).
+Response `204`. Errors: `404`.
+
+#### `POST /v1/routines/{id}/run`
+
+Starts a run now, even if the routine is disabled. The run proceeds in the
+background. Response `202`: the run (status `running`); watch for
+`routine_finished` with its `run_id`, or poll the runs list.
+
+Errors: `404`, `409` (a run of this routine is already in progress), `503`.
+
+#### `GET /v1/routines/{id}/runs`
+
+Query: `limit` 1–200, default 20. Response `200`: `{"runs": [<run>, …]}`,
+newest first. Errors: `400` (bad limit), `404`.
+
 ---
 
 ## SSE events
@@ -433,6 +567,7 @@ brevity.
 | `approval_resolved` | `{"approval_id": "appr_…", "decision": "approve"}` | An approval was answered; `decision` is `approve`, `deny`, `expired`, or `canceled` |
 | `done` | `{}` | The turn finished successfully |
 | `error` | `{"message": "model request failed: …"}` | The turn failed; terminal |
+| `routine_finished` | `{"routine_id": 4, "run_id": 9, "status": "done"}` | A routine run ended (`status` is `done`, `error`, or `canceled`); `conversation_id` is the run's conversation. Sent on `GET /v1/events` only |
 
 `tool_call.id` and `tool_result.id` match each other. A denied, timed-out, or
 failed tool call still produces a `tool_result`, whose summary starts with
@@ -441,7 +576,7 @@ result and the turn continues.
 
 Go types for every payload live in `internal/api/events`
 (`TextData`, `ToolCallData`, `ToolResultData`, `ApprovalRequiredData`,
-`ApprovalResolvedData`, `DoneData`, `ErrorData`); `events.ConversationOf`
+`ApprovalResolvedData`, `DoneData`, `ErrorData`, `RoutineFinishedData`); `events.ConversationOf`
 returns an event's conversation. Server code publishes with
 `events.Bus.Publish(userID, events.Event{Type: events.TypeText, Data: …})` and
 writes per-request streams with `events.NewSSEWriter`.

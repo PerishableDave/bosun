@@ -64,6 +64,8 @@ type Registry struct {
 	mu   sync.RWMutex
 	pre  []Named[PreToolCall]
 	post []Named[PostToolCall]
+	// events are on_event handlers (see events.go).
+	events []Named[EventHandler]
 }
 
 // Named pairs a hook function with a unique name (for audit and logs).
@@ -114,6 +116,9 @@ func (r *Registry) PostToolCalls() []Named[PostToolCall] {
 func (r *Registry) names() map[string]bool {
 	m := map[string]bool{}
 	for _, h := range r.pre {
+		m[h.Name] = true
+	}
+	for _, h := range r.events {
 		m[h.Name] = true
 	}
 	for _, h := range r.post {

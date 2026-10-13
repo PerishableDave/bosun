@@ -137,15 +137,40 @@ func (e *turnError) Unwrap() error { return e.err }
 // It persists every message, publishes events to the user's bus, and always
 // finishes with exactly one done or error event. The returned error is nil
 // iff done was published.
-func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText string) (err error) {
+func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText string) error {
+	return a.RunWith(ctx, userID, conversationID, userText, RunOptions{})
+}
+
+// RunOptions adjust one turn (see RunWith).
+type RunOptions struct {
+	// Model is a "<provider>/<model>" reference used instead of the default
+	// model for this turn. An unknown reference fails the turn with
+	// "model not available: ...".
+	Model string
+	// UntrustedInput marks userText as carrying untrusted data (for example
+	// an event payload appended to a routine prompt). Memory extraction is
+	// skipped entirely for such turns: even the explicit "remember that ..."
+	// path would read attacker-controlled text.
+	UntrustedInput bool
+}
+
+// RunWithModel is Run with a per-turn model override (empty = default).
+func (a *Agent) RunWithModel(ctx context.Context, userID int64, conversationID, userText, modelRef string) error {
+	return a.RunWith(ctx, userID, conversationID, userText, RunOptions{Model: modelRef})
+}
+
+// RunWith is Run with per-turn options.
+func (a *Agent) RunWith(ctx context.Context, userID int64, conversationID, userText string, opts RunOptions) (err error) {
 	var reply strings.Builder // assistant text of this turn, for memory extraction
 	untrusted := false        // any tool result this turn was untrusted (gates extraction)
 	defer func() {
 		if err == nil {
 			// Start extraction before done is published, so a client that
 			// has seen done can rely on Wait covering this turn.
-			a.extractAsync(memory.Turn{UserID: userID, ConversationID: conversationID,
-				UserText: userText, AssistantText: reply.String(), Untrusted: untrusted})
+			if !opts.UntrustedInput {
+				a.extractAsync(memory.Turn{UserID: userID, ConversationID: conversationID,
+					UserText: userText, AssistantText: reply.String(), Untrusted: untrusted})
+			}
 			a.publish(userID, events.TypeDone, events.DoneData{ConversationID: conversationID})
 			return
 		}
@@ -170,7 +195,11 @@ func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText 
 	if _, err := a.st.GetConversation(ctx, userID, conversationID); err != nil {
 		return fmt.Errorf("agent: conversation: %w", err)
 	}
-	prov, model, err := a.llms.Resolve(a.defaultModel)
+	modelRef := a.defaultModel
+	if opts.Model != "" {
+		modelRef = opts.Model
+	}
+	prov, model, err := a.llms.Resolve(modelRef)
 	if err != nil {
 		return &turnError{public: "model not available", err: err}
 	}

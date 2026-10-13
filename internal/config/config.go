@@ -39,6 +39,23 @@ type DaemonConfig struct {
 	TLS     TLSConfig `yaml:"tls"`
 	// WebUI serves the browser UI at / (default true).
 	WebUI *bool `yaml:"web_ui,omitempty"`
+
+	// Timezone is the IANA zone (e.g. "Europe/Madrid") routine cron
+	// schedules are evaluated in; empty means the system's local zone.
+	Timezone string `yaml:"timezone,omitempty"`
+}
+
+// Location returns the time zone named by daemon.timezone (time.Local when
+// empty).
+func (d DaemonConfig) Location() (*time.Location, error) {
+	if d.Timezone == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(d.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("daemon.timezone %q: %w", d.Timezone, err)
+	}
+	return loc, nil
 }
 
 // WebUIEnabled reports whether the web UI is mounted.
@@ -366,6 +383,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Daemon.TLS.Enabled && (c.Daemon.TLS.CertFile == "" || c.Daemon.TLS.KeyFile == "") {
 		add("daemon.tls: cert_file and key_file are required when enabled")
+	}
+	if _, err := c.Daemon.Location(); err != nil {
+		errs = append(errs, err)
 	}
 
 	prov, model, ok := strings.Cut(c.LLM.Default, "/")

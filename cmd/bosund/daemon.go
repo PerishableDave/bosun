@@ -30,6 +30,7 @@ import (
 	"github.com/dperedo/bosun/internal/llm/providers"
 	"github.com/dperedo/bosun/internal/memory"
 	"github.com/dperedo/bosun/internal/policy"
+	"github.com/dperedo/bosun/internal/routines"
 	"github.com/dperedo/bosun/internal/store"
 	"github.com/dperedo/bosun/internal/vault"
 	"github.com/dperedo/bosun/internal/webui"
@@ -56,6 +57,8 @@ type deps struct {
 	Argon2 *auth.Argon2Params
 	// ApprovalSweep overrides the approval expiry sweep interval.
 	ApprovalSweep time.Duration
+	// RoutineTick overrides how often due cron routines are checked.
+	RoutineTick time.Duration
 }
 
 // daemon is a fully wired bosund instance.
@@ -68,6 +71,12 @@ type daemon struct {
 	integrations []integration.Integration
 	agent        *agent.Agent
 	handler      http.Handler
+
+	// Routines: hooks carries on_event subscriptions (integrations emit
+	// events with hooks.EmitEvent); sched runs routines.
+	hooks    *hooks.Registry
+	routines *routines.Store
+	sched    *routines.Scheduler
 }
 
 // newDaemon opens the store and wires every component. The returned daemon
@@ -166,7 +175,8 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	go sweepSessions(ctx, d.store, log)
 
 	// Dispatcher and agent.
-	disp := dispatch.New(tools, engine, appr, auditLog, hooks.NewRegistry(), d.bus, dispatch.WithLogger(log))
+	d.hooks = hooks.NewRegistry()
+	disp := dispatch.New(tools, engine, appr, auditLog, d.hooks, d.bus, dispatch.WithLogger(log))
 	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx)}
 	mem := memory.NewStore(d.store)
 	if cfg.Memory.IsEnabled() {
@@ -182,6 +192,9 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		log.Info("memory disabled; stored memories stay editable through the API")
 	}
 	d.agent = agent.New(llms, cfg.LLM.Default, disp, tools, d.store, d.bus, agentOpts...)
+	if err := d.setupRoutines(ctx, dp); err != nil {
+		return nil, err
+	}
 
 	var webHandler http.Handler
 	if cfg.Daemon.WebUIEnabled() {
@@ -193,11 +206,13 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
 		Tools: tools, Audit: auditLog, Memories: mem, WebUI: webHandler,
 		Integrations: func() []integration.Integration { return initialised },
+		Routines:     routines.Service{Store: d.routines, Scheduler: d.sched},
 	})
 	if err != nil {
 		return nil, err
 	}
 	d.handler = apiSrv.Handler()
+	go d.sched.Run(ctx)
 	return d, nil
 }
 
@@ -306,6 +321,12 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 // extraction), then releases integrations and the store. It is safe on a
 // partially built daemon.
 func (d *daemon) Close() {
+	if d.sched != nil {
+		// In-flight routine runs get a few seconds to finish, then are
+		// canceled (and recorded as canceled).
+		d.sched.Close(routineShutdownGrace)
+		d.sched = nil
+	}
 	if d.agent != nil {
 		d.agent.Close()
 		d.agent = nil

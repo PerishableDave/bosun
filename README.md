@@ -12,8 +12,8 @@ MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
 policy, approvals, an audit log, and an encrypted credential vault. The only
 built-in integration so far is `websearch` (`websearch.fetch` for public web
 pages; `websearch.search` needs a SearXNG instance), per-user memory, the MCP
-bridge (third-party tools from external MCP servers), and the web UI.
-Calendar, email, notes, and routines are not built yet.
+bridge (third-party tools from external MCP servers), routines (scheduled and
+event-driven runs), and the web UI. Calendar, email, and notes are not built yet.
 
 ## Quick start
 
@@ -128,6 +128,34 @@ integrations:
   credentials yet.
 - MCP servers are third-party code running with your user's privileges; only
   configure servers you trust.
+
+### Routines
+
+A routine runs a prompt as you on a schedule (cron, in `daemon.timezone`,
+default the system zone) or when an event happens, with the same permissions
+as your chats: anything that needs approval waits for you.
+
+```sh
+./bin/bosun routines add --name morning-brief --cron "0 7 * * 1-5" \
+    --prompt "Summarize today's calendar and flag anything urgent."
+./bin/bosun routines list
+./bin/bosun routines run 1 --wait             # run now and print the reply
+./bin/bosun routines runs 1                   # history: status, reply, conversation
+./bin/bosun routines edit 1 --disable
+```
+
+Each run gets its own conversation (`routine: <name>`). Routines can also be
+seeded from `bosun.yaml` (created once per owner and name; later edits made
+with the CLI are kept):
+
+```yaml
+routines:
+  - name: morning-brief
+    owner: dave
+    trigger: { cron: "0 7 * * 1-5" }
+    prompt: "Summarize today's calendar."
+    model: anthropic/claude-haiku-5-5   # optional override
+```
 
 ### Audit log
 
