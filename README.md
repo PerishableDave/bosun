@@ -14,7 +14,7 @@ Built-in integrations so far are `websearch` (`websearch.fetch` for public web
 pages; `websearch.search` needs a SearXNG instance) and `notes` (Markdown
 files, off by default), plus per-user memory, the MCP bridge (third-party
 tools from external MCP servers), routines (scheduled and event-driven runs),
-and the web UI. Calendar and email are not built yet.
+and the web UI, plus `email` (IMAP/SMTP, off by default). Calendar is not built yet.
 
 ## Quick start
 
@@ -116,6 +116,66 @@ integrations:
 - Paths are relative to the notes folder. Absolute paths, `..`, hidden
   files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
   point outside the folder are refused. Reads return at most 200 KB.
+
+### Email
+
+The `email` integration reads, searches, drafts, sends, archives and flags
+mail over IMAP and SMTP, so it works with Gmail, Fastmail, iCloud,
+Outlook.com and self-hosted servers. Enable it in `bosun.yaml` and restart
+`bosund`:
+
+```yaml
+integrations:
+  email:
+    enabled: true
+    poll_interval: 2m   # check INBOXes for new mail (email.received events); "off" disables
+```
+
+Accounts are per user and stored in the credential vault. Each user links
+their own, in one of two ways:
+
+**App password (any provider).** Create an app password at your provider
+(Gmail: needs 2-Step Verification, then Google Account > Security > App
+passwords; iCloud: appleid.apple.com; Fastmail: Settings > Privacy & Security;
+Outlook.com: Microsoft account > Security), then:
+
+```sh
+./bin/bosun credentials set email password \
+    --field host=imap.fastmail.com --field user=me@fastmail.com
+# prompts for the secret: the app password
+```
+
+Optional fields: `smtp_host` (default: `host` with `imap.` replaced by
+`smtp.`), `imap_port` (default 993, TLS; 143 uses STARTTLS), `smtp_port`
+(default 465 TLS, falling back to 587 with STARTTLS), `email` (From address
+when the login is not an address), `name` (From display name), `save_sent`
+(`true`/`false`: file a copy of sent mail in Sent; default true, false for
+Gmail, which does it itself). Credentials are only ever sent over TLS.
+
+**Google sign-in (Gmail).** `bosun connect google --scopes imap` (add other
+bundles as needed, e.g. `--scopes imap,calendar`) links the account with
+OAuth; email then uses XOAUTH2 against `imap.gmail.com` / `smtp.gmail.com`.
+If both are present, the Google link wins.
+
+- Tools: `email.list`, `email.search` (`from:`, `to:`, `subject:"..."`,
+  `since:2026-01-31`, `before:`, `unread`, `flagged`, other words match the
+  text), `email.read`, `email.folders` (capability `email.read`, read risk);
+  `email.draft` (`email.draft`, write: saves to Drafts, sends nothing);
+  `email.archive`, `email.mark` (`email.organize`, write); `email.send`
+  (`email.send`, **destructive**: irreversible, so it asks by default).
+  Replies (`in_reply_to: <uid>`) get proper `In-Reply-To`/`References`
+  headers and default to the sender and "Re: subject".
+- Everything containing mail (bodies, subjects, senders, folder names) is
+  treated as untrusted data: email is the easiest way for a stranger to put
+  instructions in front of the assistant. HTML is converted to text, invisible
+  characters are removed, attachments are listed by name and size only, and
+  bodies are capped at 50,000 characters. `email.read` does not mark mail as
+  read.
+- New mail: the poller emits `email.received` (`uid`, `folder`, `from`,
+  `subject`, `snippet`, `date`) for each new INBOX message, so a routine with
+  `trigger: { event: email.received }` runs for that user. Mail already in the
+  INBOX when an account is first seen is not announced, restarts do not
+  re-announce, and at most 20 events are emitted per poll.
 
 ### Hooks
 

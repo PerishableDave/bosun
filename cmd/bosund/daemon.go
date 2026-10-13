@@ -24,6 +24,7 @@ import (
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
+	"github.com/dperedo/bosun/internal/integrations/email"
 	"github.com/dperedo/bosun/internal/integrations/mcp"
 	"github.com/dperedo/bosun/internal/integrations/notes"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
@@ -45,6 +46,7 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
 	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
+	"email": func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
@@ -210,6 +212,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	if err := d.setupRoutines(ctx, dp); err != nil {
 		return nil, err
 	}
+	d.wireIntegrationEvents(vlt) // after routines subscribe to on_event
 
 	var webHandler http.Handler
 	if cfg.Daemon.WebUIEnabled() {

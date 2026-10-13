@@ -230,6 +230,37 @@ separate process. It is the one integration allowed to import `os/exec`
 (`PATH`, `HOME`, `LANG` plus explicitly mapped variables) so other providers'
 API keys do not leak into third-party servers.
 
+### First-party integrations
+
+| Integration | Scope | Tools (risk) |
+|---|---|---|
+| `websearch` | shared | `search`, `fetch` (read) |
+| `notes` | per user (or shared) | `list`, `search`, `read` (read); `write`, `append` (write); `delete` (destructive) |
+| `email` | per user | `list`, `search`, `read`, `folders` (read); `draft`, `archive`, `mark` (write); `send` (destructive) |
+| `mcp` | shared | discovered from external servers |
+
+**email** (`internal/integrations/email`) speaks IMAP4rev1 and SMTP itself
+(small stdlib-only clients), so any provider works: Gmail, Fastmail, iCloud,
+Outlook.com, self-hosted. Accounts are per user and live in the vault, not in
+`bosun.yaml`: a `password` credential (app password plus `host`/`user`
+fields) or an `oauth2:google` credential from `bosun connect google` (XOAUTH2;
+the token needs the `https://mail.google.com/` scope). Each tool call opens
+one IMAP connection (30 s I/O timeouts) and logs out. Everything carrying
+message content, addresses or folder names is `Untrusted`; HTML is stripped
+to text and zero-width/bidi characters are removed. `email.send` is
+destructive (irreversible, outward-facing), so the default policy asks.
+
+Integrations that work in the background implement two optional interfaces
+from `internal/integration`: `EventEmitter` (the daemon hands them an emitter
+bound to `hooks.EmitEvent`, restricted to their own `<name>.*` events and to
+a single user) and `UserLister` (the daemon lists enabled users holding a
+credential for the integration, or any `oauth2:*` credential). The email
+poller uses both: every `poll_interval` (default 2m) it checks each linked
+user's INBOX for UIDs above a high-water mark persisted in
+`<data_dir>/integrations/email/poll_state.json` and emits `email.received`
+(`{uid, folder, from, subject, snippet, date}`) for that user, at most 20 per
+poll. A user's first poll (or a UIDVALIDITY change) only records the mark.
+
 ## Request lifecycle
 
 An interactive message and a routine run take the same path from step 3 on.
@@ -458,7 +489,7 @@ llm:
 
 integrations:
   calendar:  { enabled: true, backend: caldav }
-  email:     { enabled: true, backend: imap }
+  email:     { enabled: true, poll_interval: 2m }   # accounts: per-user credentials
   notes:     { enabled: true, dir: ~/Notes }
   websearch: { enabled: true, backend: searxng, base_url: http://localhost:8080 }
   mcp:
