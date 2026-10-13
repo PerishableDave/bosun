@@ -11,9 +11,9 @@ the how. The HTTP API is documented in [docs/API.md](docs/API.md).
 MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
 policy, approvals, an audit log, and an encrypted credential vault. The only
 built-in integration so far is `websearch` (`websearch.fetch` for public web
-pages; `websearch.search` needs a SearXNG instance) and per-user memory.
-Calendar, email, notes, routines, the MCP bridge, and the web UI are not built
-yet.
+pages; `websearch.search` needs a SearXNG instance), plus per-user memory and
+the MCP bridge (third-party tools from external MCP servers). Calendar, email,
+notes, routines, and the web UI are not built yet.
 
 ## Quick start
 
@@ -79,6 +79,44 @@ each user and fully editable:
 Configure it under `memory:` in `bosun.yaml` (all optional):
 `enabled: true`, `extract_model: ""` (empty = `llm.default`; a small, cheap
 model is a good choice), `recall_limit: 8`.
+
+### MCP servers
+
+Any [Model Context Protocol](https://modelcontextprotocol.io) server can add
+tools without rebuilding Bosun. List servers under `integrations.mcp` in
+`bosun.yaml` and restart `bosund`:
+
+```yaml
+integrations:
+  mcp:
+    servers:
+      - name: github                 # [a-z0-9_-], becomes the prefix mcp.github.*
+        command: ["npx", "-y", "@modelcontextprotocol/server-github"]
+        env: { GITHUB_PERSONAL_ACCESS_TOKEN: GITHUB_TOKEN }  # child var <- daemon var
+        cwd: ""                      # optional working directory
+        timeout: 60s                 # optional, per tool call
+      - name: notion
+        url: https://mcp.example.com/mcp   # streamable HTTP
+        credential: bearer           # optional: vault credential kind "bearer" (or "bearer:<suffix>")
+```
+
+- Each remote tool becomes `mcp.<server>.<tool>` (tool names are lowercased
+  and sanitized to `[a-z0-9_-]`), with a capability of the same name you can
+  set policy on like any other: `bosun policy set mcp.github.create_issue allow`.
+- Risk is **write** (asks for approval by default) unless the server marks the
+  tool `readOnlyHint` (read) or `destructiveHint` (destructive). Results are
+  always treated as untrusted data.
+- Stdio servers run with a minimal environment: `PATH`, `HOME`, `LANG`, and
+  only the variables you map under `env`. The daemon's other secrets (LLM API
+  keys, …) are not passed on.
+- A server that fails to start is skipped, not fatal. `bosun mcp status` shows
+  each server's state, tool count and error (details are admin-only). A stdio
+  server that exits is not restarted until `bosund` restarts.
+- HTTP bearer tokens come from the credential vault (shared credential for
+  integration `mcp`, the configured kind). There is no CLI for writing vault
+  credentials yet.
+- MCP servers are third-party code running with your user's privileges; only
+  configure servers you trust.
 
 ### Audit log
 

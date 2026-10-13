@@ -298,6 +298,43 @@ Response `200`:
 }
 ```
 
+### `GET /v1/integrations`
+
+Every integration the daemon initialised (including ones that currently offer
+no tools, e.g. an MCP bridge whose servers all failed), sorted by name, with
+runtime health.
+
+Response `200`:
+
+```json
+{
+  "integrations": [
+    {
+      "name": "mcp",
+      "version": "0.1.0",
+      "scope": "shared",
+      "status": "degraded",
+      "message": "notion failed",
+      "tool_count": 26,
+      "details": [
+        {"name": "github", "transport": "stdio", "state": "ready", "tools": 26,
+         "server_name": "github-mcp-server", "server_version": "0.6.0", "protocol_version": "2025-06-18"},
+        {"name": "notion", "transport": "http", "state": "failed", "tools": 0,
+         "error": "initialize: mcp server notion: HTTP 401: unauthorized"}
+      ]
+    },
+    {"name": "websearch", "version": "0.1.0", "scope": "shared", "status": "ok", "tool_count": 2}
+  ]
+}
+```
+
+- `status` is `ok`, `degraded` or `down`. Integrations that do not report
+  health are always `ok`.
+- `details` is integration-specific and only returned to admins (it can contain
+  commands, URLs and error text). For `mcp` it is one entry per configured
+  server; `state` is `ready`, `failed` (never connected), `exited` (the stdio
+  process went away; calls fail until bosund restarts) or `closed`.
+
 ### `GET /v1/memory`
 
 The caller's memories: facts, preferences, summaries, and notes the agent

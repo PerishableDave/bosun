@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
+	"github.com/dperedo/bosun/internal/integrations/mcp"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/llm/providers"
@@ -34,8 +36,11 @@ import (
 
 // builtins are the first-party integrations that can be enabled under
 // `integrations:` in bosun.yaml.
-var builtins = map[string]func() integration.Integration{
-	"websearch": func() integration.Integration { return websearch.New() },
+var builtins = map[string]func(log *slog.Logger) integration.Integration{
+	"websearch": func(*slog.Logger) integration.Integration { return websearch.New() },
+	"mcp": func(log *slog.Logger) integration.Integration {
+		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
+	},
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
@@ -177,10 +182,12 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	}
 	d.agent = agent.New(llms, cfg.LLM.Default, disp, tools, d.store, d.bus, agentOpts...)
 
+	initialised := slices.Clone(d.integrations) // Close mutates d.integrations
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
 		Tools: tools, Audit: auditLog, Memories: mem,
+		Integrations: func() []integration.Integration { return initialised },
 	})
 	if err != nil {
 		return nil, err
@@ -206,7 +213,7 @@ func (d *daemon) enabledIntegrations(dp deps) []integration.Integration {
 			d.log.Warn("integration enabled in config is not available in this build; skipping", "integration", name)
 			continue
 		}
-		out = append(out, mk())
+		out = append(out, mk(d.log))
 	}
 	return append(out, dp.Integrations...)
 }
@@ -226,6 +233,13 @@ func (d *daemon) initIntegration(ctx context.Context, reg *integration.Registry,
 	}
 	// Track it before Register so Close runs even if registration fails.
 	d.integrations = append(d.integrations, in)
+	if len(in.Tools()) == 0 && len(in.Manifest().Capabilities) == 0 {
+		// Integrations that discover tools at runtime (the MCP bridge) may
+		// end up with none, e.g. every server failed to start. That is not
+		// fatal; it stays listed by GET /v1/integrations with its status.
+		d.log.Warn("integration has no tools; not registering", "integration", m.Name)
+		return nil
+	}
 	if err := reg.Register(in); err != nil {
 		return fmt.Errorf("integration %s: register: %w", m.Name, err)
 	}

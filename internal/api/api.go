@@ -55,6 +55,9 @@ type Options struct {
 	Audit audit.Logger
 	// Memories stores per-user memory (usually *memory.Store).
 	Memories Memories
+	// Integrations lists every initialised integration, including ones that
+	// registered no tools, for GET /v1/integrations.
+	Integrations func() []integration.Integration
 }
 
 // Server holds API dependencies.
@@ -74,6 +77,8 @@ type Server struct {
 	audit     audit.Logger
 	memories  Memories
 
+	integrations func() []integration.Integration
+
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
 }
@@ -85,7 +90,7 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat,
 		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
-		tools: o.Tools, audit: o.Audit, memories: o.Memories, turns: map[string]bool{}}
+		tools: o.Tools, audit: o.Audit, memories: o.Memories, integrations: o.Integrations, turns: map[string]bool{}}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -122,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/policy/{capability}", authed(s.handleSetPolicyRule))
 	mux.Handle("DELETE /v1/policy/{capability}", authed(s.handleDeletePolicyRule))
 	mux.Handle("GET /v1/tools", authed(s.handleListTools))
+	mux.Handle("GET /v1/integrations", authed(s.handleListIntegrations))
 	mux.Handle("GET /v1/memory", authed(s.handleListMemories))
 	mux.Handle("POST /v1/memory", authed(s.handleCreateMemory))
 	mux.Handle("PUT /v1/memory/{id}", authed(s.handleUpdateMemory))
