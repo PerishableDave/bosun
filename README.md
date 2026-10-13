@@ -233,6 +233,68 @@ routines:
     model: anthropic/claude-haiku-5-5   # optional override
 ```
 
+### Text your assistant on Telegram
+
+`bosund` can run a Telegram bot so you can chat with your assistant, answer
+approvals and get routine results from your phone. It long-polls Telegram
+(`getUpdates`), so it needs no public URL, port forwarding or webhook.
+
+1. In Telegram, talk to [@BotFather](https://t.me/BotFather): send `/newbot`,
+   pick a name and a username, and copy the token it gives you.
+2. Enable the channel in `bosun.yaml` and restart `bosund`:
+
+   ```yaml
+   channels:
+     telegram:
+       enabled: true
+       allowed_usernames: [your_telegram_username]   # optional allowlist for linking
+       # token_env: BOSUN_TELEGRAM_TOKEN             # alternative to the vault
+   ```
+
+3. Store the token (admin, kept encrypted in the vault; the bot picks it up
+   within 30 seconds, no restart needed):
+
+   ```sh
+   ./bin/bosun credentials set channels telegram_bot_token --shared
+   ```
+
+4. Link your chat. On your computer:
+
+   ```sh
+   ./bin/bosun channels link telegram
+   # Link code: K7QX2M
+   # Send /link K7QX2M to @my_bosun_bot on Telegram.
+   ```
+
+   Open a private chat with your bot and send `/link K7QX2M`. Codes are
+   single-use and expire after 10 minutes.
+
+Then just send messages. Replies stream into one message; tool calls show as
+`⚙ notes.read`; anything that needs approval arrives with **Approve** /
+**Deny** buttons. Approvals raised elsewhere (the web UI, a routine waiting at
+7am) are pushed to your linked chats too, and finished routines post their
+reply. Bot commands: `/new` (fresh conversation), `/approvals`, `/whoami`,
+`/unlink`, `/help`. Each chat talks to one long-lived conversation titled
+`telegram`, also visible in the web UI and `bosun chat`.
+
+```sh
+./bin/bosun channels list                       # your linked chats
+./bin/bosun channels unlink telegram 123456789  # cut one off
+```
+
+Safety and privacy:
+
+- A chat acts as you only after it redeemed a code you generated. Messages
+  from unlinked chats get one "how to link" reply per hour and never reach the
+  agent; group chats are ignored and cannot be linked. Every update's sender
+  must be the linked private chat. Five wrong codes from a chat lock it out of
+  linking for an hour.
+- A linked chat has your permissions, like the CLI: protect your Telegram
+  account (enable two-step verification) and use `allowed_usernames`.
+- Telegram bot chats are not end-to-end encrypted: your messages, the
+  assistant's replies and approval details pass through Telegram's servers.
+  The daemon logs chat IDs, never message text.
+
 ### Credentials
 
 Integration secrets (API keys, tokens) live in the daemon's encrypted vault.

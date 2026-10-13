@@ -641,6 +641,54 @@ taken from `?scope=` (default `user`). Response `204 No Content`; audited like
 Errors: `403` (member deleting a shared credential), `404` (no such
 credential).
 
+### Channels
+
+Chat-app frontends (v1: Telegram, see the README). A chat acts as a user only
+after it is *linked*: the user requests a one-time code here and sends
+`/link <code>` from inside the chat app.
+
+#### `GET /v1/channels`
+
+The channels enabled on this server and the caller's links.
+
+```json
+{ "channels": ["telegram"],
+  "links": [
+    { "channel": "telegram", "external_id": "123456789", "display_name": "Dave (@dave)",
+      "conversation_id": "conv_…", "created_at": "2026-10-13T10:00:00Z" }
+  ] }
+```
+
+`external_id` is the channel's identity for the chat (for Telegram, the
+private chat ID). `conversation_id` is the conversation the chat talks to
+(omitted until its first message).
+
+#### `POST /v1/channels/{channel}/link`
+
+Issues a link code for the caller. No body. Response `201`:
+
+```json
+{ "channel": "telegram", "code": "K7QX2M", "expires_at": "2026-10-13T10:10:00Z",
+  "instructions": "Send /link K7QX2M to @my_bosun_bot on Telegram." }
+```
+
+Codes are 6 characters (`A-Z` and `2-9` without look-alikes), valid for 10
+minutes, single-use, and held in memory (a daemon restart voids them). A new
+code replaces the caller's previous one for that channel. Redeeming one from
+an identity already linked to another user fails. Links and unlinks are
+audited (kind `config`, integration `channels`). Errors: `404` (channel not
+enabled).
+
+#### `DELETE /v1/channels/{channel}/{external_id}`
+
+Unlinks one of the caller's chats. Response `204`; `404` if the caller has no
+such link. Deleting a user deletes their links.
+
+The Telegram bot token is the shared credential `channels/telegram_bot_token`
+(`PUT /v1/credentials/channels/telegram_bot_token`, admin only). The
+`channels` integration appears in `GET /v1/integrations` while a channel is
+enabled, with its health (`down` until a token is set, `ok` while polling).
+
 ---
 
 ## SSE events

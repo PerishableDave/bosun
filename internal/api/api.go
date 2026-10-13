@@ -72,6 +72,10 @@ type Options struct {
 	// Credentials is the credential vault (usually *vault.Vault) behind
 	// /v1/credentials.
 	Credentials Credentials
+
+	// Channels manages chat-app links (usually *channels.Manager) behind
+	// /v1/channels. Nil means no channel is enabled.
+	Channels Channels
 }
 
 // Server holds API dependencies.
@@ -99,6 +103,8 @@ type Server struct {
 
 	creds Credentials
 
+	channels Channels
+
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
 }
@@ -113,6 +119,7 @@ func New(o Options) (*Server, error) {
 		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, hooks: o.Hooks, turns: map[string]bool{}}
 	s.routines = o.Routines
 	s.creds = o.Credentials
+	s.channels = o.Channels
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -165,6 +172,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/credentials", authed(s.handleListCredentials))
 	mux.Handle("PUT /v1/credentials/{integration}/{kind}", authed(s.handlePutCredential))
 	mux.Handle("DELETE /v1/credentials/{integration}/{kind}", authed(s.handleDeleteCredential))
+	mux.Handle("GET /v1/channels", authed(s.handleListChannels))
+	mux.Handle("POST /v1/channels/{channel}/link", authed(s.handleChannelLinkCode))
+	mux.Handle("DELETE /v1/channels/{channel}/{external_id}", authed(s.handleDeleteChannelLink))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)

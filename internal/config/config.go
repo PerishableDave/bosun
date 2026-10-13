@@ -31,6 +31,7 @@ type Config struct {
 	Audit        AuditConfig                  `yaml:"audit"`
 	Telemetry    TelemetryConfig              `yaml:"telemetry"`
 	Memory       MemoryConfig                 `yaml:"memory,omitempty"`
+	Channels     ChannelsConfig               `yaml:"channels,omitempty"`
 }
 
 // DaemonConfig controls how bosund listens and where it keeps data.
@@ -522,6 +523,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.validateScriptHooks()...)
+	errs = append(errs, c.validateChannels()...)
 	return errors.Join(errs...)
 }
 
