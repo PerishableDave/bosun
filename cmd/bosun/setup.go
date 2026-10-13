@@ -1,0 +1,172 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dperedo/bosun/internal/auth"
+	"github.com/dperedo/bosun/internal/config"
+	"github.com/dperedo/bosun/internal/store"
+)
+
+func newSetupCmd(g *globals) *cobra.Command {
+	var force bool
+	var listen, dataDir, admin string
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Create bosun.yaml, the data directory, and the first admin user",
+		Long: `setup writes bosun.yaml with sensible defaults (unless it already exists),
+creates the data directory with mode 0700, initialises the database, and
+creates the first admin user if none exists. It is safe to re-run.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSetup(cmd.Context(), g, newPrompter(cmd.InOrStdin(), cmd.OutOrStdout()), setupOpts{
+				force: force, listen: listen, dataDir: dataDir, admin: admin,
+				listenSet: cmd.Flags().Changed("listen"), dataDirSet: cmd.Flags().Changed("data-dir"),
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing bosun.yaml")
+	cmd.Flags().StringVar(&listen, "listen", config.DefaultListen, "daemon listen address")
+	cmd.Flags().StringVar(&dataDir, "data-dir", config.DefaultDataDir, "data directory")
+	cmd.Flags().StringVar(&admin, "admin", "", "admin username (prompted if empty)")
+	return cmd
+}
+
+type setupOpts struct {
+	force                 bool
+	listen, dataDir       string
+	listenSet, dataDirSet bool
+	admin                 string
+}
+
+func runSetup(ctx context.Context, g *globals, p *prompter, o setupOpts) error {
+	out := p.out
+	fmt.Fprintln(out, "Bosun setup")
+	fmt.Fprintln(out)
+
+	_, statErr := os.Stat(g.configPath)
+	exists := statErr == nil
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return fmt.Errorf("check config: %w", statErr)
+	}
+
+	if exists && !o.force {
+		fmt.Fprintf(out, "Using existing config %s (pass --force to overwrite).\n", g.configPath)
+	} else {
+		cfg := config.Default()
+		var err error
+		if cfg.Daemon.Listen, err = answer(p, "Listen address", o.listen, o.listenSet); err != nil {
+			return err
+		}
+		if cfg.Daemon.DataDir, err = answer(p, "Data directory", o.dataDir, o.dataDirSet); err != nil {
+			return err
+		}
+		// Validate a copy with paths expanded before writing anything.
+		check := *cfg
+		if check.Daemon.DataDir, err = config.ExpandPath(cfg.Daemon.DataDir); err != nil {
+			return err
+		}
+		if err := check.Validate(); err != nil {
+			return fmt.Errorf("invalid settings: %w", err)
+		}
+		if err := config.Save(g.configPath, cfg); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Wrote %s\n", g.configPath)
+	}
+
+	cfg, err := config.Load(g.configPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.Daemon.DataDir, 0o700); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	if err := os.Chmod(cfg.Daemon.DataDir, 0o700); err != nil {
+		return fmt.Errorf("chmod data dir: %w", err)
+	}
+	fmt.Fprintf(out, "Data directory %s (mode 0700)\n", cfg.Daemon.DataDir)
+
+	st, err := store.Open(ctx, cfg.DBPath())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if _, err := st.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	authSvc, err := auth.New(st, auth.Options{})
+	if err != nil {
+		return err
+	}
+	has, err := authSvc.HasUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if has {
+		fmt.Fprintln(out, "Users already exist; not creating an admin.")
+	} else if err := createAdmin(ctx, p, authSvc, o.admin); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Next steps:")
+	fmt.Fprintf(out, "  bosund --config %s\n", g.configPath)
+	fmt.Fprintln(out, "  bosun login")
+	fmt.Fprintln(out, "  bosun status")
+	return nil
+}
+
+// answer returns the flag value if it was set explicitly, otherwise prompts
+// with the flag value as the default.
+func answer(p *prompter, label, val string, set bool) (string, error) {
+	if set {
+		return val, nil
+	}
+	return p.line(label, val)
+}
+
+func createAdmin(ctx context.Context, p *prompter, a *auth.Service, username string) error {
+	var err error
+	if username == "" {
+		def := "admin"
+		if u := os.Getenv("USER"); auth.ValidateUsername(u) == nil {
+			def = u
+		}
+		if username, err = p.line("Admin username", def); err != nil {
+			return err
+		}
+	}
+	if err := auth.ValidateUsername(username); err != nil {
+		return err
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		pw, err := p.password(fmt.Sprintf("Password for %s (min %d chars)", username, auth.MinPasswordLen))
+		if err != nil {
+			return err
+		}
+		if err := auth.ValidatePassword(pw); err != nil {
+			fmt.Fprintln(p.out, err)
+			continue
+		}
+		confirm, err := p.password("Confirm password")
+		if err != nil {
+			return err
+		}
+		if pw != confirm {
+			fmt.Fprintln(p.out, "Passwords do not match.")
+			continue
+		}
+		if _, err := a.CreateUser(ctx, username, pw, auth.RoleAdmin); err != nil {
+			return err
+		}
+		fmt.Fprintf(p.out, "Created admin user %q\n", username)
+		return nil
+	}
+	return errors.New("too many attempts")
+}
