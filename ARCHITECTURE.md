@@ -183,7 +183,9 @@ Rules that keep in-process plugins honest:
 - A `go vet`-style lint (via `golangci-lint` custom rule or `depguard`) forbids
   `internal/integrations/**` from importing `os/exec`, `internal/store`,
   `internal/auth`, or other integrations. This is the compile-time substitute
-  for process isolation.
+  for process isolation. The single exception is `os/exec` in
+  `internal/integrations/mcp` (that directory only), because stdio MCP servers
+  are subprocesses.
 - Integrations receive credentials through `CredentialSource`, scoped to the
   current user, and never read the vault directly.
 
@@ -193,13 +195,38 @@ Rules that keep in-process plugins honest:
 runtime from a configured external MCP server (stdio or HTTP). Each remote tool
 becomes a `Tool` with:
 
-- capability `mcp.<server>.<tool>` (user must grant it like any other),
-- risk defaulting to **Write** unless the server annotates it read-only,
-- results always marked `Untrusted: true`.
+- capability `mcp.<server>.<tool>` (user must grant it like any other); the
+  tool segment is the remote name sanitized to `[a-z0-9_-]` (camelCase to
+  snake_case, collisions suffixed `_2`, bounded so the model-facing name fits
+  64 characters), with a map back to the original name for `tools/call`,
+- risk **Read** only if the server annotates `readOnlyHint: true`,
+  **Destructive** if `destructiveHint: true`, otherwise **Write** (so unknown
+  tools need approval by default),
+- results always marked `Untrusted: true`; `isError` results become errors;
+  non-text content blocks are summarized (`[image image/png]`, ...).
+
+The client is hand-written (no SDK): JSON-RPC 2.0 over stdio (newline-delimited,
+a reader goroutine demultiplexes responses by id) or streamable HTTP (POST,
+JSON or SSE responses, `Mcp-Session-Id` and `MCP-Protocol-Version` headers,
+optional bearer token from the vault). Only `initialize`, `tools/list` (with
+pagination) and `tools/call` are used; resources, prompts and sampling are not.
+
+The bridge is `ScopeShared` in v1: one connection per server for all users.
+Per-user servers would need `ScopePerUser` and a connection per user. Its
+tools are discovered in `Init`, so the manifest's capabilities are filled in
+then. A server that fails to start is logged and skipped; if every server
+fails, the daemon still starts and the bridge registers no tools. Health is
+reported through the optional `integration.StatusReporter` interface and
+`GET /v1/integrations` (`bosun mcp status`). Stdio servers that exit are not
+restarted (calls fail with "mcp server X is not running"); `Close` sends
+SIGTERM and kills after 3s.
 
 This is how users extend Bosun without rebuilding it. It is also where the
 in-process decision costs the least, because the external server is already a
-separate process.
+separate process. It is the one integration allowed to import `os/exec`
+(enforced by the import guard), and it gives children a minimal environment
+(`PATH`, `HOME`, `LANG` plus explicitly mapped variables) so other providers'
+API keys do not leak into third-party servers.
 
 ## Request lifecycle
 

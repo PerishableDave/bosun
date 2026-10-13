@@ -169,3 +169,24 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 	id, ok := ctx.Value(userIDKey{}).(int64)
 	return id, ok
 }
+
+// Integration health states reported through StatusReporter.
+const (
+	StatusOK       = "ok"
+	StatusDegraded = "degraded"
+	StatusDown     = "down"
+)
+
+// Status is an integration's runtime health.
+type Status struct {
+	State   string // StatusOK | StatusDegraded | StatusDown
+	Message string // human-readable summary
+	Details any    // integration-specific, JSON-encodable (e.g. per-server state for the MCP bridge)
+}
+
+// StatusReporter is optionally implemented by integrations whose health can
+// change at runtime (e.g. the MCP bridge, whose servers may fail to start or
+// exit). Integrations that do not implement it are reported as "ok".
+type StatusReporter interface {
+	Status() Status
+}

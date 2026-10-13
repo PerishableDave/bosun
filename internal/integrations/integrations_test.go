@@ -14,8 +14,20 @@ import (
 
 const modulePath = "github.com/dperedo/bosun"
 
-// forbiddenExact are imports no integration may use.
+// forbiddenExact are imports no integration may use, except as allowed by
+// exactAllow.
 var forbiddenExact = []string{"os/exec"}
+
+// exactAllow names, per forbidden import, the single integration directory
+// (relative to internal/integrations) allowed to use it.
+//
+// os/exec: the MCP bridge (internal/integrations/mcp) must spawn stdio MCP
+// servers, which are subprocesses by definition; that is the point of the
+// bridge, and the external server is already a separate process. The
+// exemption covers that one package directory only: not its subpackages
+// (e.g. mcp/mcptest) and not any other integration. The bridge gives
+// children a minimal environment rather than the daemon's.
+var exactAllow = map[string]string{"os/exec": "mcp"}
 
 // forbiddenPrefix are module packages (and their subpackages) no integration
 // may use.
@@ -30,10 +42,14 @@ const integrationsPkg = modulePath + "/internal/integrations"
 
 // checkImport returns a non-empty reason if a file belonging to integration
 // own (the first path segment under internal/integrations; "" for files in
-// the root package) may not import imp.
-func checkImport(own, imp string) string {
+// the root package), located in dir (slash-separated, relative to
+// internal/integrations), may not import imp.
+func checkImport(own, dir, imp string) string {
 	for _, f := range forbiddenExact {
 		if imp == f {
+			if allowed, ok := exactAllow[f]; ok && dir == allowed {
+				continue
+			}
 			return "imports " + imp
 		}
 	}
@@ -83,6 +99,7 @@ func scan(root string) ([]string, error) {
 		if parts := strings.Split(filepath.ToSlash(rel), "/"); len(parts) > 1 {
 			own = parts[0]
 		}
+		dir := filepath.ToSlash(filepath.Dir(rel))
 		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		if err != nil {
 			return fmt.Errorf("parse %s: %w", path, err)
@@ -92,7 +109,7 @@ func scan(root string) ([]string, error) {
 			if err != nil {
 				return fmt.Errorf("%s: bad import %s", path, is.Path.Value)
 			}
-			if why := checkImport(own, imp); why != "" {
+			if why := checkImport(own, dir, imp); why != "" {
 				violations = append(violations, fmt.Sprintf("%s: %s", fset.Position(is.Pos()), why))
 			}
 		}
@@ -151,6 +168,13 @@ import _ "github.com/dperedo/bosun/internal/integrations/notes/sub"`)
 import "github.com/dperedo/bosun/internal/integrations"`)
 	write("root.go", `package integrations
 import "github.com/dperedo/bosun/internal/integrations/notes"`)
+	// The MCP bridge may spawn processes; its subpackages and others may not.
+	write("mcp/stdio.go", `package mcp
+import "os/exec"`)
+	write("mcp/sub/sub.go", `package sub
+import "os/exec"`)
+	write("mcpx/x.go", `package mcpx
+import "os/exec"`)
 
 	violations, err := scan(root)
 	if err != nil {
@@ -167,12 +191,17 @@ import "github.com/dperedo/bosun/internal/integrations/notes"`)
 		"root.go:2:8: imports another integration (notes)",
 		"worse.go:3:2: imports github.com/dperedo/bosun/internal/vault",
 		"worse.go:4:2: imports github.com/dperedo/bosun/internal/dispatch",
+		"sub.go:2:8: imports os/exec",
+		"x.go:2:8: imports os/exec",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing violation %q in:\n%s", want, joined)
 		}
 	}
-	if len(violations) != 9 {
-		t.Errorf("got %d violations, want 9:\n%s", len(violations), joined)
+	if strings.Contains(joined, "stdio.go") {
+		t.Errorf("mcp/stdio.go must be allowed to import os/exec:\n%s", joined)
+	}
+	if len(violations) != 11 {
+		t.Errorf("got %d violations, want 11:\n%s", len(violations), joined)
 	}
 }
