@@ -55,6 +55,8 @@ type Options struct {
 	Audit audit.Logger
 	// Memories stores per-user memory (usually *memory.Store).
 	Memories Memories
+	// WebUI, if set, serves every path outside /v1/ (the browser UI).
+	WebUI http.Handler
 }
 
 // Server holds API dependencies.
@@ -73,6 +75,7 @@ type Server struct {
 	tools     *integration.Registry
 	audit     audit.Logger
 	memories  Memories
+	webUI     http.Handler
 
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
@@ -85,7 +88,7 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat,
 		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
-		tools: o.Tools, audit: o.Audit, memories: o.Memories, turns: map[string]bool{}}
+		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, turns: map[string]bool{}}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -127,9 +130,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/memory/{id}", authed(s.handleUpdateMemory))
 	mux.Handle("DELETE /v1/memory/{id}", authed(s.handleDeleteMemory))
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
-	})
+	if s.webUI != nil {
+		mux.Handle("/", s.webUI)
+		mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+		})
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+		})
+	}
 	return s.recoverer(s.securityHeaders(mux))
 }
 

@@ -37,7 +37,12 @@ type DaemonConfig struct {
 	Listen  string    `yaml:"listen"`
 	DataDir string    `yaml:"data_dir"`
 	TLS     TLSConfig `yaml:"tls"`
+	// WebUI serves the browser UI at / (default true).
+	WebUI *bool `yaml:"web_ui,omitempty"`
 }
+
+// WebUIEnabled reports whether the web UI is mounted.
+func (d DaemonConfig) WebUIEnabled() bool { return d.WebUI == nil || *d.WebUI }
 
 // TLSConfig configures HTTPS. TLS is required when listening on a
 // non-loopback address.

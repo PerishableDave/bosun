@@ -215,3 +215,14 @@ memory: { enabled: false, extract_model: ollama/llama3, recall_limit: 3 }
 		}
 	}
 }
+
+func TestWebUIFlag(t *testing.T) {
+	cfg, err := Parse([]byte(""))
+	if err != nil || !cfg.Daemon.WebUIEnabled() {
+		t.Fatalf("default: err=%v", err)
+	}
+	cfg, err = Parse([]byte("daemon: { web_ui: false }"))
+	if err != nil || cfg.Daemon.WebUIEnabled() {
+		t.Fatalf("web_ui false: err=%v", err)
+	}
+}

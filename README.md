@@ -12,8 +12,7 @@ MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
 policy, approvals, an audit log, and an encrypted credential vault. The only
 built-in integration so far is `websearch` (`websearch.fetch` for public web
 pages; `websearch.search` needs a SearXNG instance) and per-user memory.
-Calendar, email, notes, routines, the MCP bridge, and the web UI are not built
-yet.
+Calendar, email, notes, routines, and the MCP bridge are not built yet.
 
 ## Quick start
 
@@ -47,6 +46,17 @@ In another terminal:
 ./bin/bosun tools                 # what the assistant can do, and your policy for each
 ./bin/bosun chat "hello"          # one turn; `bosun chat` alone opens a session
 ```
+
+### Web UI
+
+`bosund` also serves a small browser UI at its listen address (by default
+<http://127.0.0.1:7777/>): sign in with your Bosun username and password, chat
+with streamed replies and tool calls, approve or deny pending approvals (also
+those raised by routines in other conversations), set allow/ask/deny per tool,
+and browse, add, edit and delete your memories. It is plain HTML/JS embedded in
+the binary (no build step, nothing loaded from the network) and follows your
+light/dark setting. The token lives in `sessionStorage`, so closing the tab
+signs you out. Set `daemon.web_ui: false` in `bosun.yaml` to serve the API only.
 
 ### Permissions
 

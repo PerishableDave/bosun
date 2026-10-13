@@ -30,6 +30,7 @@ import (
 	"github.com/dperedo/bosun/internal/policy"
 	"github.com/dperedo/bosun/internal/store"
 	"github.com/dperedo/bosun/internal/vault"
+	"github.com/dperedo/bosun/internal/webui"
 )
 
 // builtins are the first-party integrations that can be enabled under
@@ -177,10 +178,14 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	}
 	d.agent = agent.New(llms, cfg.LLM.Default, disp, tools, d.store, d.bus, agentOpts...)
 
+	var webHandler http.Handler
+	if cfg.Daemon.WebUIEnabled() {
+		webHandler = webui.Handler()
+	}
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
-		Tools: tools, Audit: auditLog, Memories: mem,
+		Tools: tools, Audit: auditLog, Memories: mem, WebUI: webHandler,
 	})
 	if err != nil {
 		return nil, err
