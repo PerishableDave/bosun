@@ -486,7 +486,10 @@ Routine object:
     at startup (not once per missed time).
   - `event`: dotted lower-case name such as `email.received`. The event's
     data is appended to the prompt as a delimited untrusted-data block, and
-    memory extraction is skipped for such runs.
+    memory extraction is skipped for such runs. Built-in events:
+    `email.received` (the `email` integration's poller, once per new INBOX
+    message, for the mailbox owner) with data
+    `{"uid", "folder", "from", "subject", "snippet", "date"}`.
 - `model` (optional) overrides `llm.default` as `<provider>/<model>`; an
   unknown provider fails the run with `model not available: …`.
 - `deliver`: `web` and/or `cli` (default both). In v1 both mean the reply is
