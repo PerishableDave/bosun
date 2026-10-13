@@ -76,6 +76,9 @@ type Options struct {
 	// OAuth links provider accounts (usually *oauth.Manager) behind
 	// /v1/oauth and the unauthenticated /oauth/callback.
 	OAuth OAuth
+	// Channels manages chat-app links (usually *channels.Manager) behind
+	// /v1/channels. Nil means no channel is enabled.
+	Channels Channels
 }
 
 // Server holds API dependencies.
@@ -104,6 +107,8 @@ type Server struct {
 	creds Credentials
 	oauth OAuth
 
+	channels Channels
+
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
 }
@@ -119,6 +124,7 @@ func New(o Options) (*Server, error) {
 	s.routines = o.Routines
 	s.creds = o.Credentials
 	s.oauth = o.OAuth
+	s.channels = o.Channels
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -176,6 +182,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/oauth/{provider}/status", authed(s.handleOAuthStatus))
 	mux.Handle("DELETE /v1/oauth/{provider}", authed(s.handleDeleteOAuth))
 	mux.HandleFunc("GET /oauth/callback", s.handleOAuthCallback) // no auth: the single-use state identifies the user
+	mux.Handle("GET /v1/channels", authed(s.handleListChannels))
+	mux.Handle("POST /v1/channels/{channel}/link", authed(s.handleChannelLinkCode))
+	mux.Handle("DELETE /v1/channels/{channel}/{external_id}", authed(s.handleDeleteChannelLink))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)

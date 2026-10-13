@@ -34,6 +34,9 @@ type Config struct {
 	// OAuth configures the OAuth2 clients behind `bosun connect <provider>`,
 	// keyed by provider name ("google", "microsoft").
 	OAuth map[string]OAuthProviderConfig `yaml:"oauth,omitempty"`
+
+	// Channels configures chat-app frontends (Telegram, ...).
+	Channels ChannelsConfig `yaml:"channels,omitempty"`
 }
 
 // OAuthProviderConfig is one OAuth2 client registration. The client secret is
@@ -549,6 +552,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.validateScriptHooks()...)
+	errs = append(errs, c.validateChannels()...)
 	return errors.Join(errs...)
 }
 

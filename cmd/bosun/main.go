@@ -60,6 +60,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newRoutinesCmd(g))
 	root.AddCommand(newCredentialsCmd(g))
 	root.AddCommand(newConnectCmd(g))
+	root.AddCommand(newChannelsCmd(g))
 	return root
 }
 

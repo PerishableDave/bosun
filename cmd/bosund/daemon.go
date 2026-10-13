@@ -20,6 +20,7 @@ import (
 	"github.com/dperedo/bosun/internal/approval"
 	"github.com/dperedo/bosun/internal/audit"
 	"github.com/dperedo/bosun/internal/auth"
+	"github.com/dperedo/bosun/internal/channels"
 	"github.com/dperedo/bosun/internal/config"
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/hooks"
@@ -65,6 +66,9 @@ type deps struct {
 	ApprovalSweep time.Duration
 	// RoutineTick overrides how often due cron routines are checked.
 	RoutineTick time.Duration
+	// ChannelTokenRetry overrides how often channels re-check a missing
+	// or rejected bot token.
+	ChannelTokenRetry time.Duration
 }
 
 // daemon is a fully wired bosund instance.
@@ -83,6 +87,9 @@ type daemon struct {
 	hooks    *hooks.Registry
 	routines *routines.Store
 	sched    *routines.Scheduler
+
+	// channels are the chat-app frontends (Telegram), started by Serve.
+	channels *channels.Manager
 }
 
 // newDaemon opens the store and wires every component. The returned daemon
@@ -219,12 +226,16 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		return nil, err
 	}
 	d.wireIntegrationEvents(vlt) // after routines subscribe to on_event
+	if err := d.setupChannels(vlt, appr, auditLog, dp); err != nil {
+		return nil, err
+	}
 
 	var webHandler http.Handler
 	if cfg.Daemon.WebUIEnabled() {
 		webHandler = webui.Handler()
 	}
 	initialised := slices.Clone(d.integrations) // Close mutates d.integrations
+	initialised = append(initialised, d.channelIntegrations()...)
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
@@ -234,6 +245,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Hooks:        hk,
 		Credentials:  vlt,
 		OAuth:        oauthMgr,
+		Channels:     d.channels,
 	})
 	if err != nil {
 		return nil, err
@@ -351,6 +363,7 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 			errc <- srv.Serve(ln)
 		}
 	}()
+	d.startChannels(ctx)
 	select {
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -372,6 +385,7 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 // extraction), then releases integrations and the store. It is safe on a
 // partially built daemon.
 func (d *daemon) Close() {
+	d.closeChannels()
 	if d.sched != nil {
 		// In-flight routine runs get a few seconds to finish, then are
 		// canceled (and recorded as canceled).

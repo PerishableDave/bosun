@@ -92,6 +92,7 @@ internal/
     mcp/             bridge: external MCP servers -> Integration
   policy/            capability rules, risk defaults, decision engine
   approval/          pending approvals, delivery to clients, timeouts
+  channels/          chat-app frontends (Linker, Manager); telegram/ bot
   hooks/             hook registry and runner
   routines/          cron + event triggers, routine runner
   memory/            per-user memory store and retrieval
@@ -423,6 +424,26 @@ How it is built (`internal/routines`):
   (owner, name), creating missing routines only; edits made through the
   API/CLI are never overwritten. Owners that don't exist yet are skipped.
 
+## Frontends and channels
+
+The CLI and the web UI are thin clients of the HTTP API. **Channels** are
+frontends that live inside `bosund` and connect to a chat service
+(`internal/channels`; v1: Telegram, long-polling `getUpdates`, so no public
+URL). A `channels.Channel` is `Name()`, `Start(ctx)`, `Close()`, plus
+optional interfaces for link instructions, vault credential kinds (stored
+under the integration name `channels`) and health. The `Linker` binds an
+external identity (`telegram:<chat id>`) to a user through one-time codes
+(`POST /v1/channels/{channel}/link`, then `/link <code>` in the chat), stored
+in `channel_links` (cascade-deleted with the user). Unlinked identities never
+reach the agent. A linked chat is trusted like the CLI: its messages run
+`agent.Run` as the user in that chat's conversation (one turn at a time per
+user, later messages queued). The channel subscribes to each linked user's
+event bus to render the turn (text streamed by throttled message edits, tool
+calls, errors), to push every `approval_required` (from any client or
+routine) with inline Approve/Deny buttons that call `approval.Resolve` as
+that user, and to post `routine_finished` replies. Slack, Discord or
+iMessage channels would implement the same interface and reuse the Linker.
+
 ## Memory
 
 Per-user, local, inspectable.
@@ -555,7 +576,8 @@ A single SQLite database at `$data_dir/bosun.db` (WAL mode), migrations
 embedded in the binary. Tables, roughly:
 
 `users`, `sessions`, `credentials`, `policy_rules`, `conversations`, `messages`,
-`memories`, `routines`, `routine_runs`, `approvals`, `audit_log`, `hooks`.
+`memories`, `routines`, `routine_runs`, `approvals`, `audit_log`, `hooks`,
+`channel_links`.
 
 SQLite is enough for a household. The `store` package is the only thing that
 knows SQL, so a Postgres backend is a contained change if it's ever needed.
