@@ -72,6 +72,10 @@ type Options struct {
 	// Credentials is the credential vault (usually *vault.Vault) behind
 	// /v1/credentials.
 	Credentials Credentials
+
+	// OAuth links provider accounts (usually *oauth.Manager) behind
+	// /v1/oauth and the unauthenticated /oauth/callback.
+	OAuth OAuth
 }
 
 // Server holds API dependencies.
@@ -98,6 +102,7 @@ type Server struct {
 	routines Routines
 
 	creds Credentials
+	oauth OAuth
 
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
@@ -113,6 +118,7 @@ func New(o Options) (*Server, error) {
 		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, hooks: o.Hooks, turns: map[string]bool{}}
 	s.routines = o.Routines
 	s.creds = o.Credentials
+	s.oauth = o.OAuth
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -165,6 +171,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/credentials", authed(s.handleListCredentials))
 	mux.Handle("PUT /v1/credentials/{integration}/{kind}", authed(s.handlePutCredential))
 	mux.Handle("DELETE /v1/credentials/{integration}/{kind}", authed(s.handleDeleteCredential))
+	mux.Handle("GET /v1/oauth", authed(s.handleListOAuth))
+	mux.Handle("POST /v1/oauth/{provider}/start", authed(s.handleOAuthStart))
+	mux.Handle("GET /v1/oauth/{provider}/status", authed(s.handleOAuthStatus))
+	mux.Handle("DELETE /v1/oauth/{provider}", authed(s.handleDeleteOAuth))
+	mux.HandleFunc("GET /oauth/callback", s.handleOAuthCallback) // no auth: the single-use state identifies the user
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)

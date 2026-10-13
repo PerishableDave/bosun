@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,6 +154,55 @@ var ErrNotFound = errors.New("vault: credential not found")
 type Vault struct {
 	st   Store
 	keys KeySource
+
+	resMu     sync.RWMutex
+	resolvers []prefixResolver
+}
+
+// KindResolver resolves a credential kind for any integration, instead of
+// the integration's own vault row. internal/oauth registers one for the
+// "oauth2:" prefix so every integration asking for "oauth2:google" gets the
+// calling user's linked Google account (with a fresh access token).
+//
+// owner is the user the source resolved from ctx (nil for a ScopeShared
+// integration's source). Resolve returns an error wrapping
+// integration.ErrNoCredential when the owner has nothing for kind.
+type KindResolver interface {
+	Resolve(ctx context.Context, owner *int64, kind string) (integration.Credential, error)
+}
+
+type prefixResolver struct {
+	prefix string
+	r      KindResolver
+}
+
+// RegisterResolver routes every SourceFor lookup of a kind starting with
+// prefix (e.g. "oauth2:") to r. Later registrations for the same prefix
+// replace earlier ones. Register before integrations are initialised.
+func (v *Vault) RegisterResolver(prefix string, r KindResolver) {
+	v.resMu.Lock()
+	defer v.resMu.Unlock()
+	for i := range v.resolvers {
+		if v.resolvers[i].prefix == prefix {
+			v.resolvers[i].r = r
+			return
+		}
+	}
+	v.resolvers = append(v.resolvers, prefixResolver{prefix: prefix, r: r})
+}
+
+// resolverFor returns the registered resolver whose prefix kind has (the
+// longest match), or nil.
+func (v *Vault) resolverFor(kind string) KindResolver {
+	v.resMu.RLock()
+	defer v.resMu.RUnlock()
+	var best prefixResolver
+	for _, pr := range v.resolvers {
+		if strings.HasPrefix(kind, pr.prefix) && len(pr.prefix) >= len(best.prefix) {
+			best = pr
+		}
+	}
+	return best.r
 }
 
 // New returns a Vault.
@@ -317,6 +367,10 @@ func (v *Vault) List(ctx context.Context, userID *int64, integrationName string)
 //     regardless of the caller.
 //
 // Any other scope yields a source that always returns ErrNoCredential.
+//
+// Kinds matching a resolver registered with RegisterResolver (e.g.
+// "oauth2:google") are answered by that resolver for the same owner, not
+// from the integration's own row.
 func (v *Vault) SourceFor(integrationName string, scope integration.Scope) integration.CredentialSource {
 	return &source{v: v, integ: integrationName, scope: scope}
 }
@@ -340,6 +394,9 @@ func (s *source) Get(ctx context.Context, kind string) (integration.Credential, 
 		owner = nil
 	default:
 		return integration.Credential{}, fmt.Errorf("%s: invalid scope %q: %w", s.integ, s.scope, integration.ErrNoCredential)
+	}
+	if r := s.v.resolverFor(kind); r != nil {
+		return r.Resolve(ctx, owner, kind)
 	}
 	c, err := s.v.Get(ctx, owner, s.integ, kind)
 	if errors.Is(err, ErrNotFound) {

@@ -641,6 +641,95 @@ taken from `?scope=` (default `user`). Response `204 No Content`; audited like
 Errors: `403` (member deleting a shared credential), `404` (no such
 credential).
 
+### OAuth account linking
+
+`bosun connect <provider>` links a user's Google or Microsoft account. The
+tokens are stored in the vault as the caller's credential
+`("oauth", "oauth2:<provider>")` and every integration that asks its
+credential source for kind `oauth2:<provider>` receives a fresh access token
+(see ARCHITECTURE.md, "Users, auth, and credentials"). Providers are
+configured by the admin under `oauth:` in `bosun.yaml`; an unconfigured
+provider answers `400`.
+
+#### `POST /v1/oauth/{provider}/start`
+
+```json
+{ "scopes": ["email", "calendar"] }
+```
+
+`scopes` are scope bundle names (google: `email`, `calendar`, `tasks`,
+`drive`, `imap`, `caldav`; microsoft: `email`, `calendar`, `tasks`, `drive`);
+an entry starting with `https://` is passed through as a literal scope; empty
+selects the provider's defaults (`email`, `calendar`). Response `200`:
+
+```json
+{
+  "provider": "google",
+  "state": "6Qx…",
+  "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?…&code_challenge_method=S256&…",
+  "redirect_url": "http://127.0.0.1:7777/oauth/callback",
+  "scopes": ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "…"],
+  "expires_at": "2026-10-13T10:10:00Z"
+}
+```
+
+The daemon keeps a single-use state (user, provider, PKCE S256 verifier,
+scopes) for 10 minutes; it is held in memory, so a daemon restart cancels
+pending authorizations. `redirect_url` is `/oauth/callback` on the host and
+scheme the request came in on, so it must be registered with the provider:
+`http://127.0.0.1:<port>/oauth/callback` for a loopback daemon and
+`https://<host>:<port>/oauth/callback` for a LAN/TLS one. At most 10 pending
+authorizations per user (`429`).
+
+Errors: `400` (unknown bundle, provider not configured or missing its client
+secret), `404` (unknown provider).
+
+#### `GET /v1/oauth/{provider}/status?state=<state>`
+
+Polled by the CLI. Response `200`:
+
+```json
+{ "status": "complete",
+  "account": { "provider": "google", "email": "dave@example.com", "scopes": ["…"],
+               "expiry": "…", "linked_at": "…", "updated_at": "…" } }
+```
+
+`status` is `pending`, `complete`, `error` (with `error`, e.g. the user denied
+consent or the code exchange failed) or `expired` (with `error`). `404` for a
+state that is unknown, purged, or belongs to another user.
+
+#### `GET /oauth/callback?code=…&state=…` (no auth, outside `/v1`)
+
+The provider's redirect target, served by `bosund`. It consumes the state
+(replays fail), exchanges the code with the PKCE verifier, reads the account
+email from the provider's userinfo endpoint, stores the tokens for the user who
+started the flow, audits the link (kind `config`, provider, email and scopes;
+never tokens), and renders a small HTML page ("You can close this tab").
+`400` for an invalid, expired or reused state; `502` if the provider refused
+the code or consent was denied.
+
+#### `GET /v1/oauth`
+
+The caller's linked accounts (never tokens) and the known providers:
+
+```json
+{
+  "accounts": [{ "provider": "google", "email": "dave@example.com", "scopes": ["…"],
+                 "expiry": "…", "linked_at": "…", "updated_at": "…" }],
+  "providers": [{ "name": "google", "configured": true,
+                  "bundles": { "email": ["…"], "calendar": ["…"] },
+                  "default_bundles": ["email", "calendar"] }]
+}
+```
+
+`expiry` is the current access token's; it is refreshed on use.
+
+#### `DELETE /v1/oauth/{provider}`
+
+Unlinks: calls the provider's revocation endpoint with the refresh token (best
+effort; Google has one, Microsoft does not) and deletes the stored tokens.
+`204`; `404` if nothing is linked. Audited (kind `config`).
+
 ---
 
 ## SSE events
