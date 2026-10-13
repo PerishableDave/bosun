@@ -24,6 +24,7 @@ import (
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/integrations/mcp"
+	"github.com/dperedo/bosun/internal/integrations/notes"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/llm/providers"
@@ -41,6 +42,7 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
+	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
@@ -224,9 +226,23 @@ func (d *daemon) enabledIntegrations(dp deps) []integration.Integration {
 			d.log.Warn("integration enabled in config is not available in this build; skipping", "integration", name)
 			continue
 		}
-		out = append(out, mk(d.log))
+		in := mk(d.log)
+		if n, ok := in.(*notes.Integration); ok {
+			n.SetUserDirFunc(d.username) // per-user notes live in <dir>/<username>/
+		}
+		out = append(out, in)
 	}
 	return append(out, dp.Integrations...)
+}
+
+// username returns a user's username (immutable and path-safe; see
+// auth.ValidateUsername).
+func (d *daemon) username(ctx context.Context, userID int64) (string, error) {
+	u, err := d.store.GetUser(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
 }
 
 func (d *daemon) initIntegration(ctx context.Context, reg *integration.Registry, vlt *vault.Vault, in integration.Integration) error {
