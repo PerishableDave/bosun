@@ -95,7 +95,9 @@ internal/
   hooks/             hook registry and runner
   routines/          cron + event triggers, routine runner
   memory/            per-user memory store and retrieval
-  auth/              users, roles, sessions, credential vault
+  auth/              users, roles, sessions
+  vault/             credential vault, master key sources (file, OS keychain)
+  tlsutil/           self-signed cert generation, fingerprints, pinned clients
   api/               HTTP + SSE handlers, request auth
   config/            bosun.yaml loading, validation, defaults
   store/             SQLite schema, migrations, queries
@@ -404,17 +406,37 @@ Per-user, local, inspectable.
 
 - Roles: `admin` (manage users, integrations, daemon config) and `member`.
 - Auth: local username + password (argon2id). Session tokens are bearer tokens
-  stored hashed; the CLI keeps its token in the OS keychain where available,
-  else a mode-0600 file.
+  stored hashed; the CLI keeps its token in a mode-0600 file
+  (`<data_dir>/cli-token`; OS keychain storage is planned).
 - Transport: `bosund` listens on `127.0.0.1` by default. For household use the
-  admin enables LAN binding, which **requires** TLS (self-signed cert generated
-  by `bosun setup`, or user-supplied).
-- **Credential vault:** integration secrets (OAuth tokens, API keys) are stored
-  per user, encrypted with a daemon master key held in the OS keychain (macOS
-  Keychain, Secret Service on Linux) or a mode-0600 key file as fallback.
-  Integrations get a `CredentialSource` scoped to the requesting user.
+  admin enables LAN binding (`bosun setup --lan`), which **requires** TLS:
+  setup generates a self-signed ECDSA P-256 certificate (10 years; SANs: the
+  hostname, `localhost`, loopback and the host's IPv4 addresses) in
+  `<data_dir>/tls/`, or `daemon.tls.cert_file`/`key_file` point at a
+  user-supplied pair. `bosund` logs the certificate's SHA-256 fingerprint at
+  startup. Remote CLIs verify it by pinning that fingerprint
+  (`--insecure-fingerprint`, saved with the token by `bosun login`) or with
+  `--ca-file`; there is no "skip verification" mode.
+- **Credential vault:** integration secrets (OAuth tokens, API keys) are
+  encrypted with AES-256-GCM under a daemon master key, bound to their row
+  (owner, integration, kind). The master key source is `daemon.master_key`:
+  `auto` (default: the OS keychain, i.e. macOS Keychain via `security` or the
+  Secret Service via `secret-tool`, else the file), `keychain`, or `file`
+  (`<data_dir>/master.key`, mode 0600). The tools are driven as subprocesses
+  (no cgo), with the key passed on stdin. An existing key file is imported
+  into the keychain and left in place for the user to delete; a marker file
+  in the data dir records that the key lives in the keychain so `auto` never
+  silently falls back to a new file key. Integrations get a
+  `CredentialSource` scoped to the requesting user.
+- Users write credentials through `PUT /v1/credentials/{integration}/{kind}`
+  (`bosun credentials set`, secret from stdin or a hidden prompt). The kind
+  must be declared by the integration's manifest; every write and delete is
+  audited (kind `config`) without the secret.
 - Integration *configuration* (which integrations are enabled, endpoints) is
-  admin-level; *credentials and permissions* are always per user.
+  admin-level. *Credentials* are per user for `ScopePerUser` integrations;
+  `ScopeShared` integrations (one household backend, e.g. the MCP bridge) use
+  only the shared credential, which only admins can write. *Permissions* are
+  always per user.
 
 ## Configuration
 
@@ -425,7 +447,8 @@ DB and are edited through the UI/CLI, never by hand-editing files.
 daemon:
   listen: 127.0.0.1:7777
   data_dir: ~/.bosun
-  tls: { enabled: false }
+  tls: { enabled: false }   # cert_file, key_file; `bosun setup --lan` fills these in
+  master_key: auto          # auto | keychain | file
 
 llm:
   default: anthropic/claude-sonnet-5-5

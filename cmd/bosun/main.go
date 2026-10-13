@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dperedo/bosun/internal/config"
+	"github.com/dperedo/bosun/internal/tlsutil"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -17,6 +18,9 @@ var version = "dev"
 type globals struct {
 	configPath string
 	server     string
+	// caFile and fingerprint configure TLS verification (tlsclient.go).
+	caFile      string
+	fingerprint string
 }
 
 func main() {
@@ -36,10 +40,25 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&g.configPath, "config", config.DefaultPath(), "path to bosun.yaml (env BOSUN_CONFIG)")
-	root.PersistentFlags().StringVar(&g.server, "server", "", "daemon base URL (default derived from config daemon.listen)")
+	root.PersistentFlags().StringVar(&g.server, "server", "", "daemon base URL, e.g. https://host:7777 (default: the server you logged in to, else derived from config daemon.listen)")
+	root.PersistentFlags().StringVar(&g.caFile, "ca-file", "", "PEM file of certificates to trust for an https server")
+	root.PersistentFlags().StringVar(&g.fingerprint, "insecure-fingerprint", "", "trust only the https server certificate with this SHA-256 fingerprint (for a self-signed daemon cert)")
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if g.fingerprint != "" && g.caFile != "" {
+			return fmt.Errorf("pass either --insecure-fingerprint or --ca-file, not both")
+		}
+		if g.fingerprint != "" {
+			if _, err := tlsutil.ParseFingerprint(g.fingerprint); err != nil {
+				return err
+			}
+		}
+		cmd.SetContext(withClients(cmd.Context(), g))
+		return nil
+	}
 	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g),
 		newToolsCmd(g), newPolicyCmd(g), newMemoryCmd(g), newMCPCmd(g), newHooksCmd(g))
 	root.AddCommand(newRoutinesCmd(g))
+	root.AddCommand(newCredentialsCmd(g))
 	return root
 }
 
@@ -56,6 +75,9 @@ func (g *globals) loadConfig() (*config.Config, error) {
 func (g *globals) baseURL() (string, error) {
 	if g.server != "" {
 		return g.server, nil
+	}
+	if s := g.loadSavedServer(); s.Server != "" {
+		return s.Server, nil
 	}
 	cfg, err := g.loadConfig()
 	if err != nil {

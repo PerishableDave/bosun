@@ -68,6 +68,10 @@ type Options struct {
 
 	// Hooks is the hook registry listed by GET /v1/hooks (admin only).
 	Hooks *hooks.Registry
+
+	// Credentials is the credential vault (usually *vault.Vault) behind
+	// /v1/credentials.
+	Credentials Credentials
 }
 
 // Server holds API dependencies.
@@ -93,6 +97,8 @@ type Server struct {
 
 	routines Routines
 
+	creds Credentials
+
 	turnsMu sync.Mutex
 	turns   map[string]bool // conversations with a turn in progress
 }
@@ -106,6 +112,7 @@ func New(o Options) (*Server, error) {
 		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
 		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, hooks: o.Hooks, turns: map[string]bool{}}
 	s.routines = o.Routines
+	s.creds = o.Credentials
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -155,6 +162,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /v1/routines/{id}", authed(s.handleDeleteRoutine))
 	mux.Handle("POST /v1/routines/{id}/run", authed(s.handleRunRoutine))
 	mux.Handle("GET /v1/routines/{id}/runs", authed(s.handleListRoutineRuns))
+	mux.Handle("GET /v1/credentials", authed(s.handleListCredentials))
+	mux.Handle("PUT /v1/credentials/{integration}/{kind}", authed(s.handlePutCredential))
+	mux.Handle("DELETE /v1/credentials/{integration}/{kind}", authed(s.handleDeleteCredential))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)
