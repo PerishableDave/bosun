@@ -31,6 +31,24 @@ type Config struct {
 	Audit        AuditConfig                  `yaml:"audit"`
 	Telemetry    TelemetryConfig              `yaml:"telemetry"`
 	Memory       MemoryConfig                 `yaml:"memory,omitempty"`
+	// OAuth configures the OAuth2 clients behind `bosun connect <provider>`,
+	// keyed by provider name ("google", "microsoft").
+	OAuth map[string]OAuthProviderConfig `yaml:"oauth,omitempty"`
+}
+
+// OAuthProviderConfig is one OAuth2 client registration. The client secret is
+// never written in bosun.yaml: it comes from the environment variable named
+// by ClientSecretEnv, else from the shared vault credential
+// oauth/client_secret:<provider>. Public clients (Microsoft) need none.
+type OAuthProviderConfig struct {
+	ClientID        string `yaml:"client_id"`
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty"`
+	// Endpoint overrides (advanced: e.g. a single-tenant Microsoft
+	// authority, or a test identity provider). Empty means the built-in.
+	AuthURL     string `yaml:"auth_url,omitempty"`
+	TokenURL    string `yaml:"token_url,omitempty"`
+	UserinfoURL string `yaml:"userinfo_url,omitempty"`
+	RevokeURL   string `yaml:"revoke_url,omitempty"`
 }
 
 // DaemonConfig controls how bosund listens and where it keeps data.
@@ -471,6 +489,15 @@ func (c *Config) Validate() error {
 	for name := range c.Integrations {
 		if !nameRe.MatchString(name) {
 			add("integrations.%s: invalid integration name", name)
+		}
+	}
+
+	for name, oc := range c.OAuth {
+		if !nameRe.MatchString(name) {
+			add("oauth.%s: invalid provider name", name)
+		}
+		if oc.ClientID == "" {
+			add("oauth.%s.client_id: required", name)
 		}
 	}
 

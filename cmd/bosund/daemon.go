@@ -136,6 +136,10 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	}
 	log.Info("vault master key ready", "source", keyDesc)
 	vlt := vault.New(d.store, keys)
+	oauthMgr, err := d.setupOAuth(vlt, auditLog)
+	if err != nil {
+		return nil, err
+	}
 	tools := integration.NewRegistry()
 	for _, in := range d.enabledIntegrations(dp) {
 		if err := d.initIntegration(ctx, tools, vlt, in); err != nil {
@@ -224,6 +228,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Routines:     routines.Service{Store: d.routines, Scheduler: d.sched},
 		Hooks:        hk,
 		Credentials:  vlt,
+		OAuth:        oauthMgr,
 	})
 	if err != nil {
 		return nil, err
