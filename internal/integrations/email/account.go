@@ -29,9 +29,9 @@ const (
 )
 
 // errNoAccount is returned (wrapped) when the user has linked no account.
-var errNoAccount = errors.New("no email account linked. Either store an app password with " +
-	"`bosun credentials set email password --field host=imap.example.com --field user=you@example.com` " +
-	"(secret = the app password), or link Google with `bosun connect google --scopes imap`")
+var errNoAccount = errors.New("no email account linked (not configured). Run `bosun connect email` to add one with an app password " +
+	"(or store it directly with `bosun credentials set email password --field host=imap.example.com --field user=you@example.com`, " +
+	"secret = the app password), or link Google with `bosun connect google --scopes imap`")
 
 // account is a resolved mailbox: where to connect and how to log in. It is
 // built per call from the calling user's credential.
@@ -256,7 +256,7 @@ func (e *Integration) openIMAP(ctx context.Context, a *account) (*imapConn, erro
 	if err != nil {
 		var ie *IMAPError
 		if errors.As(err, &ie) {
-			return nil, fmt.Errorf("imap: login to %s as %s rejected: %s (check the app password / re-link the account)", a.imapHost, a.user, ie.Text)
+			return nil, &loginRejectedError{host: a.imapHost, user: a.user, text: ie.Text}
 		}
 		return nil, err
 	}

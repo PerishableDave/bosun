@@ -190,3 +190,22 @@ type Status struct {
 type StatusReporter interface {
 	Status() Status
 }
+
+// CredentialTester is optionally implemented by integrations that can check
+// a credential before it is stored, e.g. by logging in to the mail server.
+// TestCredential must not store or log the credential (in particular not
+// the Secret) and should return an error whose message tells a person what
+// to fix (wrong password, server unreachable, ...). The daemon exposes it as
+// POST /v1/integrations/{name}/test.
+type CredentialTester interface {
+	TestCredential(ctx context.Context, cred Credential) error
+}
+
+// CredentialKindLister is optionally implemented by a CredentialSource. Kinds
+// returns the kinds of the credentials stored for this integration by the
+// owner Get would use (the calling user for per-user integrations), so an
+// integration can find suffixed kinds such as "ics:family" it cannot guess.
+// Kinds answered by a resolver (such as "oauth2:google") are not listed.
+type CredentialKindLister interface {
+	Kinds(ctx context.Context) ([]string, error)
+}

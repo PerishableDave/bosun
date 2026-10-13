@@ -369,6 +369,22 @@ func (f *fakeCreds) set(user int64, c integration.Credential) {
 	f.creds[user][c.Kind] = c
 }
 
+// Kinds implements integration.CredentialKindLister.
+func (f *fakeCreds) Kinds(ctx context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	uid, ok := integration.UserIDFromContext(ctx)
+	if !ok {
+		return nil, integration.ErrNoCredential
+	}
+	var out []string
+	for k := range f.creds[uid] {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (f *fakeCreds) Get(ctx context.Context, kind string) (integration.Credential, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

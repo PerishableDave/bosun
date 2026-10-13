@@ -94,8 +94,14 @@ type Integration struct {
 	googleURL string
 	now       func() time.Time
 
+	// ICS feeds: fetch client (built lazily; tests inject one) and whether
+	// private addresses may be fetched (tests only).
+	feedClient       *http.Client
+	feedAllowPrivate bool
+
 	mu    sync.Mutex
 	cache map[int64]cacheEntry
+	feeds map[string]*feedEntry // "<user>|<url fingerprint>"
 }
 
 type cacheEntry struct {
@@ -113,6 +119,7 @@ func New() *Integration {
 		googleURL: GoogleCalDAVURL,
 		now:       time.Now,
 		cache:     map[int64]cacheEntry{},
+		feeds:     map[string]*feedEntry{},
 		hc: &http.Client{
 			Timeout:       httpTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -135,7 +142,7 @@ func (c *Integration) Manifest() integration.Manifest {
 		Version:         "0.1.0",
 		Scope:           integration.ScopePerUser,
 		Capabilities:    []integration.Capability{capRead, capWrite, capDelete},
-		CredentialKinds: []string{KindGoogle, KindPassword},
+		CredentialKinds: []string{KindGoogle, KindPassword, KindICS},
 		ConfigSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{` +
 			`"backend":{"type":"string","enum":["caldav"],"description":"calendar protocol (only caldav)"}}}`),
 	}
@@ -244,9 +251,11 @@ func (c *Integration) Tools() []integration.Tool {
 // --- accounts ---
 
 func noAccountError() error {
-	return errors.New("calendar: no calendar account is set up for you. Either connect Google with `bosun connect google --scopes caldav`, " +
-		"or add a CalDAV account with `bosun credentials set calendar password --field url=https://caldav.icloud.com --field user=you@icloud.com` " +
-		"(the secret is an app-specific password for iCloud; use your server's CalDAV URL for Fastmail, Nextcloud, Radicale or Baïkal)")
+	return errors.New("calendar: no calendar is set up for you (not configured). Run `bosun connect email` (iCloud or Fastmail: " +
+		"the same app password covers the calendar), or add a read-only calendar feed with `bosun connect calendar --ics` " +
+		"(e.g. Google Calendar's \"Secret address in iCal format\"), or store a CalDAV account with " +
+		"`bosun credentials set calendar password --field url=https://caldav.icloud.com --field user=you@icloud.com`, " +
+		"or connect Google with `bosun connect google --scopes caldav` for read/write Google Calendar")
 }
 
 func fingerprint(parts ...string) string {
@@ -258,7 +267,8 @@ func fingerprint(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// account resolves the calling user's account: oauth2:google, then password.
+// account resolves the calling user's account: oauth2:google, then
+// password (CalDAV), then ics feeds (read-only).
 func (c *Integration) account(ctx context.Context) (*account, error) {
 	if c.creds == nil {
 		return nil, errors.New("calendar: not initialised")
@@ -268,45 +278,65 @@ func (c *Integration) account(ctx context.Context) (*account, error) {
 	}
 	cred, err := c.creds.Get(ctx, KindGoogle)
 	if err == nil {
-		email := strings.TrimSpace(cred.Fields["email"])
-		if email == "" || strings.ContainsAny(email, "/?#") {
-			return nil, errors.New("calendar: the Google credential has no valid email field; run `bosun connect google --scopes caldav` again")
-		}
-		if !hasCalendarScope(cred.Fields["scopes"]) {
-			return nil, errors.New("calendar: the linked Google account was not granted calendar access (CalDAV needs the full " +
-				GoogleCalendarScope + " scope); run `bosun connect google --scopes caldav` (combinable, e.g. --scopes imap,caldav)")
-		}
-		if cred.Secret == "" {
-			return nil, errors.New("calendar: the Google credential has no access token; run `bosun connect google --scopes caldav` again")
-		}
-		start, err := url.Parse(c.googleURL)
-		if err != nil {
-			return nil, fmt.Errorf("calendar: google url: %w", err)
-		}
-		if err := checkScheme(start); err != nil {
-			return nil, err
-		}
-		esc := url.PathEscape(email)
-		basePath := strings.TrimSuffix(start.Path, "/")
-		return &account{
-			kind: KindGoogle, start: start, label: email,
-			principal: basePath + "/" + esc + "/user",
-			fallback:  basePath + "/" + esc + "/events/",
-			auth:      "Bearer " + cred.Secret,
-			defCal:    cred.Fields["calendar"],
-			key:       fingerprint(KindGoogle, email, start.String()),
-		}, nil
+		return c.googleAccount(cred)
 	}
 	if !errors.Is(err, integration.ErrNoCredential) {
 		return nil, fmt.Errorf("calendar: read Google credential: %w", err)
 	}
 	cred, err = c.creds.Get(ctx, KindPassword)
-	if errors.Is(err, integration.ErrNoCredential) {
-		return nil, noAccountError()
+	if err == nil {
+		return passwordAccount(cred)
 	}
-	if err != nil {
+	if !errors.Is(err, integration.ErrNoCredential) {
 		return nil, fmt.Errorf("calendar: read password credential: %w", err)
 	}
+	feeds, err := c.icsFeeds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(feeds) == 0 {
+		return nil, noAccountError()
+	}
+	parts := []string{KindICS}
+	for _, f := range feeds {
+		parts = append(parts, f.kind, fingerprint(f.u.String()))
+	}
+	return &account{kind: KindICS, label: "ICS feeds", feeds: feeds, key: fingerprint(parts...)}, nil
+}
+
+func (c *Integration) googleAccount(cred integration.Credential) (*account, error) {
+	email := strings.TrimSpace(cred.Fields["email"])
+	if email == "" || strings.ContainsAny(email, "/?#") {
+		return nil, errors.New("calendar: the Google credential has no valid email field; run `bosun connect google --scopes caldav` again")
+	}
+	if !hasCalendarScope(cred.Fields["scopes"]) {
+		return nil, errors.New("calendar: the linked Google account was not granted calendar access (CalDAV needs the full " +
+			GoogleCalendarScope + " scope); run `bosun connect google --scopes caldav` (combinable, e.g. --scopes imap,caldav)")
+	}
+	if cred.Secret == "" {
+		return nil, errors.New("calendar: the Google credential has no access token; run `bosun connect google --scopes caldav` again")
+	}
+	start, err := url.Parse(c.googleURL)
+	if err != nil {
+		return nil, fmt.Errorf("calendar: google url: %w", err)
+	}
+	if err := checkScheme(start); err != nil {
+		return nil, err
+	}
+	esc := url.PathEscape(email)
+	basePath := strings.TrimSuffix(start.Path, "/")
+	return &account{
+		kind: KindGoogle, start: start, label: email,
+		principal: basePath + "/" + esc + "/user",
+		fallback:  basePath + "/" + esc + "/events/",
+		auth:      "Bearer " + cred.Secret,
+		defCal:    cred.Fields["calendar"],
+		key:       fingerprint(KindGoogle, email, start.String()),
+	}, nil
+}
+
+// passwordAccount builds a CalDAV account from a "password" credential.
+func passwordAccount(cred integration.Credential) (*account, error) {
 	raw := strings.TrimSpace(cred.Fields["url"])
 	user := strings.TrimSpace(cred.Fields["user"])
 	if user == "" {
@@ -342,9 +372,11 @@ type session struct {
 	cl   *client
 	cals []Calendar
 	loc  *time.Location
+	// warnings are per-feed fetch failures when other feeds worked.
+	warnings []string
 }
 
-func (c *Integration) open(ctx context.Context, tz string, refresh bool) (*session, error) {
+func (c *Integration) zone(tz string) (*time.Location, error) {
 	loc := c.loc
 	if tz = strings.TrimSpace(tz); tz != "" {
 		l, ok := loadLocation(tz)
@@ -353,12 +385,40 @@ func (c *Integration) open(ctx context.Context, tz string, refresh bool) (*sessi
 		}
 		loc = l
 	}
+	return loc, nil
+}
+
+func (c *Integration) open(ctx context.Context, tz string, refresh bool) (*session, error) {
 	acct, err := c.account(ctx)
 	if err != nil {
 		return nil, err
 	}
-	uid, _ := integration.UserIDFromContext(ctx)
+	return c.openAccount(ctx, acct, tz, refresh)
+}
+
+// openWritable is open for the write tools: ICS feeds are refused before
+// anything is fetched.
+func (c *Integration) openWritable(ctx context.Context, tz string) (*session, error) {
+	acct, err := c.account(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if acct.kind == KindICS {
+		return nil, errReadOnlyICS
+	}
+	return c.openAccount(ctx, acct, tz, false)
+}
+
+func (c *Integration) openAccount(ctx context.Context, acct *account, tz string, refresh bool) (*session, error) {
+	loc, err := c.zone(tz)
+	if err != nil {
+		return nil, err
+	}
 	cl := &client{hc: c.hc, acct: acct}
+	if acct.kind == KindICS {
+		return c.openFeeds(ctx, cl, loc)
+	}
+	uid, _ := integration.UserIDFromContext(ctx)
 	c.mu.Lock()
 	ent, ok := c.cache[uid]
 	c.mu.Unlock()
@@ -374,6 +434,30 @@ func (c *Integration) open(ctx context.Context, tz string, refresh bool) (*sessi
 	c.cache[uid] = cacheEntry{key: acct.key, cals: cals, at: c.now()}
 	c.mu.Unlock()
 	return &session{cl: cl, cals: cals, loc: loc}, nil
+}
+
+// openFeeds fetches (or reuses) every feed; one feed failing is reported as
+// a warning as long as another one works.
+func (c *Integration) openFeeds(ctx context.Context, cl *client, loc *time.Location) (*session, error) {
+	s := &session{cl: cl, loc: loc}
+	var errs []error
+	for _, f := range cl.acct.feeds {
+		pf, err := c.feed(ctx, f, loc)
+		if err != nil {
+			errs = append(errs, err)
+			s.warnings = append(s.warnings, err.Error())
+			continue
+		}
+		s.cals = append(s.cals, Calendar{
+			Name: f.name, Href: f.kind, ReadOnly: true,
+			Description: "read-only ICS feed", feed: pf,
+		})
+	}
+	if len(s.cals) == 0 {
+		return nil, errors.Join(errs...)
+	}
+	sort.SliceStable(s.cals, func(i, j int) bool { return strings.ToLower(s.cals[i].Name) < strings.ToLower(s.cals[j].Name) })
+	return s, nil
 }
 
 // find returns the calendar named (case-insensitively) or with the href.
@@ -505,6 +589,13 @@ func (c *Integration) window(ctx context.Context, s *session, cals []*Calendar, 
 	var out []located
 	skipped := 0
 	for _, cal := range cals {
+		if cal.feed != nil {
+			for _, inst := range feedInstances(cal.feed, from, to) {
+				out = append(out, located{inst: inst, cal: cal, res: resource{URL: &url.URL{Path: cal.Href}}})
+			}
+			skipped += cal.feed.skipped
+			continue
+		}
 		rs, err := s.cl.query(ctx, cal, from, to, "")
 		if err != nil {
 			return nil, 0, fmt.Errorf("calendar %q: %w", cal.Name, err)
@@ -647,6 +738,9 @@ func (c *Integration) events(ctx context.Context, in json.RawMessage) (integrati
 	if skipped > 0 {
 		fmt.Fprintf(&sb, "(%d calendar object(s) could not be parsed and were skipped)\n", skipped)
 	}
+	for _, w := range s.warnings {
+		fmt.Fprintf(&sb, "(warning: %s)\n", oneLine(w, 300))
+	}
 	return result(sb.String(), out), nil
 }
 
@@ -679,6 +773,20 @@ func (c *Integration) findUID(ctx context.Context, s *session, uid, calName stri
 		return nil, err
 	}
 	for _, cal := range cals {
+		if cal.feed != nil {
+			evs := cal.feed.byUID[uid]
+			if len(evs) == 0 {
+				continue
+			}
+			f := &found{cal: cal, res: resource{URL: &url.URL{Path: cal.Href}}, events: evs, master: evs[0]}
+			for _, e := range evs {
+				if e.RecurrenceID.IsZero() {
+					f.master = e
+					break
+				}
+			}
+			return f, nil
+		}
 		var rs []resource
 		rs, qerr := s.cl.query(ctx, cal, time.Time{}, time.Time{}, uid)
 		if qerr != nil && isStatus(qerr, http.StatusUnauthorized) {
@@ -963,7 +1071,7 @@ func (c *Integration) create(ctx context.Context, in json.RawMessage) (integrati
 	if a.Start == nil || *a.Start == "" {
 		return integration.Result{}, errors.New("calendar: start is required")
 	}
-	s, err := c.open(ctx, a.Timezone, false)
+	s, err := c.openWritable(ctx, a.Timezone)
 	if err != nil {
 		return integration.Result{}, err
 	}
@@ -1027,7 +1135,7 @@ func (c *Integration) update(ctx context.Context, in json.RawMessage) (integrati
 	if a.Summary != nil && strings.TrimSpace(*a.Summary) == "" {
 		return integration.Result{}, errors.New("calendar: summary cannot be empty")
 	}
-	s, err := c.open(ctx, a.Timezone, false)
+	s, err := c.openWritable(ctx, a.Timezone)
 	if err != nil {
 		return integration.Result{}, err
 	}
@@ -1090,7 +1198,7 @@ func (c *Integration) delete(ctx context.Context, in json.RawMessage) (integrati
 	if err := decodeArgs(in, &a); err != nil {
 		return integration.Result{}, err
 	}
-	s, err := c.open(ctx, "", false)
+	s, err := c.openWritable(ctx, "")
 	if err != nil {
 		return integration.Result{}, err
 	}
@@ -1134,7 +1242,9 @@ func (c *Integration) freebusy(ctx context.Context, in json.RawMessage) (integra
 	}
 	var cals []*Calendar
 	for i := range s.cals {
-		if !s.cals[i].ReadOnly {
+		// Busy time comes from the user's own (writable) calendars; a
+		// read-only ICS feed is the user's own calendar too.
+		if !s.cals[i].ReadOnly || s.cals[i].feed != nil {
 			cals = append(cals, &s.cals[i])
 		}
 	}

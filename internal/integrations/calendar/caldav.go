@@ -56,14 +56,15 @@ func isStatus(err error, code int) bool {
 
 // account is one user's resolved CalDAV account.
 type account struct {
-	kind      string   // credential kind used
-	start     *url.URL // configured URL (server root, principal, home or calendar)
-	principal string   // known principal URL (Google)
-	fallback  string   // calendar to use if discovery finds no home set (Google primary)
-	auth      string   // Authorization header value
-	label     string   // user / email, for messages
-	defCal    string   // preferred default calendar name (credential field "calendar")
-	key       string   // cache key fingerprint (no secrets in clear)
+	kind      string    // credential kind used
+	start     *url.URL  // configured URL (server root, principal, home or calendar)
+	principal string    // known principal URL (Google)
+	fallback  string    // calendar to use if discovery finds no home set (Google primary)
+	auth      string    // Authorization header value
+	label     string    // user / email, for messages
+	defCal    string    // preferred default calendar name (credential field "calendar")
+	key       string    // cache key fingerprint (no secrets in clear)
+	feeds     []feedRef // kind "ics": the read-only feeds
 }
 
 type client struct {
@@ -356,7 +357,8 @@ type Calendar struct {
 	Description string `json:"description,omitempty"`
 	ReadOnly    bool   `json:"read_only"`
 
-	url *url.URL
+	url  *url.URL
+	feed *parsedFeed // ICS feed calendars only
 }
 
 func samePath(a, b string) bool {

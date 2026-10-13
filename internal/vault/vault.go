@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -381,19 +382,49 @@ type source struct {
 	scope integration.Scope
 }
 
-func (s *source) Get(ctx context.Context, kind string) (integration.Credential, error) {
-	var owner *int64
+var _ integration.CredentialKindLister = (*source)(nil)
+
+// owner returns the vault owner for ctx: the calling user for per-user
+// integrations (an error wrapping ErrNoCredential without one), nil for
+// shared ones.
+func (s *source) owner(ctx context.Context, kind string) (*int64, error) {
 	switch s.scope {
 	case integration.ScopePerUser:
 		uid, ok := integration.UserIDFromContext(ctx)
 		if !ok || uid <= 0 {
-			return integration.Credential{}, fmt.Errorf("%s/%s: no calling user: %w", s.integ, kind, integration.ErrNoCredential)
+			return nil, fmt.Errorf("%s/%s: no calling user: %w", s.integ, kind, integration.ErrNoCredential)
 		}
-		owner = &uid
+		return &uid, nil
 	case integration.ScopeShared:
-		owner = nil
+		return nil, nil
 	default:
-		return integration.Credential{}, fmt.Errorf("%s: invalid scope %q: %w", s.integ, s.scope, integration.ErrNoCredential)
+		return nil, fmt.Errorf("%s: invalid scope %q: %w", s.integ, s.scope, integration.ErrNoCredential)
+	}
+}
+
+// Kinds implements integration.CredentialKindLister: the kinds stored in the
+// integration's own rows for the owner (resolver kinds are not listed).
+func (s *source) Kinds(ctx context.Context) ([]string, error) {
+	owner, err := s.owner(ctx, "*")
+	if err != nil {
+		return nil, err
+	}
+	infos, err := s.v.List(ctx, owner, s.integ)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(infos))
+	for _, in := range infos {
+		out = append(out, in.Kind)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (s *source) Get(ctx context.Context, kind string) (integration.Credential, error) {
+	owner, err := s.owner(ctx, kind)
+	if err != nil {
+		return integration.Credential{}, err
 	}
 	if r := s.v.resolverFor(kind); r != nil {
 		return r.Resolve(ctx, owner, kind)

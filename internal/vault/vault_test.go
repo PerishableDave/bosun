@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,33 @@ func TestPerUserSourceIsolation(t *testing.T) {
 	}
 	if _, err := src.Get(integration.WithUserID(ctx, f.a), "password"); !errors.Is(err, integration.ErrNoCredential) {
 		t.Errorf("per-user fell back to shared: %v", err)
+	}
+}
+
+func TestSourceKinds(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	for _, k := range []string{"ics:work", "password", "ics:family"} {
+		if err := f.v.Put(ctx, ptr(f.a), "calendar", k, integration.Credential{Secret: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.v.Put(ctx, ptr(f.b), "calendar", "ics:bob", integration.Credential{Secret: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.v.Put(ctx, ptr(f.a), "email", "password", integration.Credential{Secret: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	src := f.v.SourceFor("calendar", integration.ScopePerUser).(integration.CredentialKindLister)
+	got, err := src.Kinds(integration.WithUserID(ctx, f.a))
+	if err != nil || strings.Join(got, ",") != "ics:family,ics:work,password" {
+		t.Errorf("alice kinds = %v, %v", got, err)
+	}
+	if got, _ := src.Kinds(integration.WithUserID(ctx, f.b)); strings.Join(got, ",") != "ics:bob" {
+		t.Errorf("bob kinds = %v", got)
+	}
+	if _, err := src.Kinds(ctx); !errors.Is(err, integration.ErrNoCredential) {
+		t.Errorf("no user: %v", err)
 	}
 }
 

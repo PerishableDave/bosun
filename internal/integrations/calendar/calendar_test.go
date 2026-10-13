@@ -482,7 +482,7 @@ func TestUserIsolation(t *testing.T) {
 		t.Error("bob fetched alice's event")
 	}
 	// User 3 has no credential: the cached calendars of others are not used.
-	if _, err := call(t, c, userCtx(3), "calendar.events", map[string]any{}); err == nil || !strings.Contains(err.Error(), "no calendar account") {
+	if _, err := call(t, c, userCtx(3), "calendar.events", map[string]any{}); err == nil || !strings.Contains(err.Error(), "no calendar is set up") {
 		t.Errorf("user 3 err = %v", err)
 	}
 	for _, h := range fb.authSeen {

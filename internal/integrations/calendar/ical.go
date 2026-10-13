@@ -14,7 +14,7 @@ import (
 
 // Limits on what the parser accepts.
 const (
-	maxICSBytes = 4 << 20
+	maxICSBytes = 5 << 20
 	maxDepth    = 8
 )
 
@@ -244,7 +244,12 @@ func decodeParamValue(v string) string {
 
 // ParseICS parses an iCalendar object and returns its top-level component
 // (normally VCALENDAR).
-func ParseICS(data string) (*Component, error) {
+func ParseICS(data string) (*Component, error) { return parseICS(data, false) }
+
+// parseICS is ParseICS; lenient skips malformed content lines instead of
+// failing (used for large subscribed feeds, where one bad line should not
+// hide the whole calendar).
+func parseICS(data string, lenient bool) (*Component, error) {
 	if len(data) > maxICSBytes {
 		return nil, errors.New("icalendar object too large")
 	}
@@ -254,6 +259,9 @@ func ParseICS(data string) (*Component, error) {
 	for _, l := range lines {
 		p, err := parseLine(l)
 		if err != nil {
+			if lenient {
+				continue
+			}
 			return nil, err
 		}
 		switch p.Name {

@@ -240,39 +240,72 @@ func (e *Integration) dialSMTP(ctx context.Context, ep smtpEndpoint) (*smtpConn,
 	return newSMTPConn(conn, e.timeout), nil
 }
 
+// login reads the greeting, says EHLO, upgrades to TLS when the endpoint
+// uses STARTTLS, and authenticates.
+func (c *smtpConn) login(ctx context.Context, e *Integration, ep smtpEndpoint, acct *account) error {
+	c.deadline()
+	code, lines, err := c.reply()
+	if err != nil {
+		return fmt.Errorf("smtp greeting: %w", err)
+	}
+	if code != 220 {
+		return &SMTPError{Command: "greeting", Code: code, Text: strings.Join(lines, " ")}
+	}
+	helo := e.heloName()
+	if err := c.hello(helo); err != nil {
+		return err
+	}
+	if !ep.Implicit {
+		if _, ok := c.ext["STARTTLS"]; !ok {
+			return errors.New("smtp: server does not offer STARTTLS; refusing to send credentials without TLS")
+		}
+		if _, _, err := c.cmd("STARTTLS", "STARTTLS", 220); err != nil {
+			return err
+		}
+		tc := tls.Client(c.conn, e.tlsFor(ep.Host))
+		if err := tc.HandshakeContext(ctx); err != nil {
+			return fmt.Errorf("smtp: starttls: %w", err)
+		}
+		c.conn, c.r, c.w = tc, bufio.NewReader(tc), bufio.NewWriter(tc)
+		if err := c.hello(helo); err != nil {
+			return err
+		}
+	}
+	return c.auth(acct)
+}
+
+// checkSMTP connects to the account's submission server (falling back to
+// the next endpoint only when connecting fails, like sendMail), logs in and
+// quits without sending anything.
+func (e *Integration) checkSMTP(ctx context.Context, acct *account) error {
+	var errs []error
+	for i, ep := range acct.smtp {
+		c, err := e.dialSMTP(ctx, ep)
+		if err != nil {
+			errs = append(errs, err)
+			if i < len(acct.smtp)-1 {
+				continue
+			}
+			return errors.Join(errs...)
+		}
+		raw := c.conn
+		stop := context.AfterFunc(ctx, func() { raw.Close() })
+		err = c.login(ctx, e, ep, acct)
+		if err == nil {
+			_, _, _ = c.cmd("QUIT", "QUIT", 221)
+		}
+		stop()
+		c.conn.Close()
+		return err
+	}
+	return errors.New("smtp: no server configured")
+}
+
 func (c *smtpConn) submit(ctx context.Context, e *Integration, ep smtpEndpoint, acct *account, from string, rcpts []string, msg []byte) (string, error) {
 	raw := c.conn
 	stop := context.AfterFunc(ctx, func() { raw.Close() })
 	defer stop()
-	c.deadline()
-	code, lines, err := c.reply()
-	if err != nil {
-		return "", fmt.Errorf("smtp greeting: %w", err)
-	}
-	if code != 220 {
-		return "", &SMTPError{Command: "greeting", Code: code, Text: strings.Join(lines, " ")}
-	}
-	helo := e.heloName()
-	if err := c.hello(helo); err != nil {
-		return "", err
-	}
-	if !ep.Implicit {
-		if _, ok := c.ext["STARTTLS"]; !ok {
-			return "", errors.New("smtp: server does not offer STARTTLS; refusing to send credentials without TLS")
-		}
-		if _, _, err := c.cmd("STARTTLS", "STARTTLS", 220); err != nil {
-			return "", err
-		}
-		tc := tls.Client(c.conn, e.tlsFor(ep.Host))
-		if err := tc.HandshakeContext(ctx); err != nil {
-			return "", fmt.Errorf("smtp: starttls: %w", err)
-		}
-		c.conn, c.r, c.w = tc, bufio.NewReader(tc), bufio.NewWriter(tc)
-		if err := c.hello(helo); err != nil {
-			return "", err
-		}
-	}
-	if err := c.auth(acct); err != nil {
+	if err := c.login(ctx, e, ep, acct); err != nil {
 		return "", err
 	}
 	if _, _, err := c.cmd("MAIL", "MAIL FROM:<"+from+">", 250); err != nil {
