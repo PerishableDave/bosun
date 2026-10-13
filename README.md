@@ -271,6 +271,87 @@ daemon has started with the keychain, since anyone who can read it can decrypt
 the vault. Do not switch to `file` after a key was generated in the keychain:
 the file would hold a different key.
 
+### Connect your Google account
+
+Integrations that work with your mail, calendar or tasks use an account you
+link once with `bosun connect`. A browser opens, you sign in and approve, and
+from then on `bosund` keeps a fresh access token for you (refreshed
+automatically; the tokens are encrypted in the vault like any credential).
+
+```sh
+./bin/bosun connect google                          # default bundles: email,calendar
+./bin/bosun connect google --scopes email,calendar,tasks
+./bin/bosun connect google --no-browser             # headless: just print the URL
+./bin/bosun connect list                            # provider, account, scopes; never tokens
+./bin/bosun connect remove google                   # revoke at Google and delete
+```
+
+Scope bundles for Google:
+
+| Bundle | Scopes | Why |
+| --- | --- | --- |
+| `email` | `gmail.readonly`, `gmail.send`, `gmail.modify` | read, send, and archive/label (archiving and labelling need `gmail.modify`) |
+| `calendar` | `calendar.events`, `calendar.readonly` | read and edit events |
+| `tasks` | `tasks` | Google Tasks |
+| `drive` | `drive.readonly` | read Drive files |
+| `imap` | `https://mail.google.com/` | Gmail over IMAP/SMTP (XOAUTH2 accepts only this full scope) |
+| `caldav` | `calendar` | Google's CalDAV endpoint (needs the full calendar scope) |
+
+Connecting again replaces the stored account for that provider (one account
+per provider per user). If you revoke Bosun's access in your Google account,
+integrations report that you need to run `bosun connect google` again.
+
+**One-time admin setup (Google Cloud OAuth client):**
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create
+   (or pick) a project.
+2. *APIs & Services → Library*: enable the APIs you will use: **Gmail API**,
+   **Google Calendar API** (and **CalDAV API** for CalDAV), **Google Tasks
+   API**, **Google Drive API**.
+3. *APIs & Services → OAuth consent screen*: user type *External* (or
+   *Internal* for Workspace), add the scopes above, and while the app is in
+   *Testing* add every household member as a test user. (Refresh tokens of
+   apps in *Testing* expire after 7 days; publish the app, unverified is fine
+   for personal use, to avoid re-connecting weekly.)
+4. *APIs & Services → Credentials → Create credentials → OAuth client ID*,
+   application type **Desktop app**. Desktop clients accept a loopback
+   redirect on any port, so `http://127.0.0.1:<port>/oauth/callback` works
+   without registering it.
+5. Configure `bosun.yaml` and give `bosund` the client secret through the
+   environment (or the vault, see below), then restart `bosund`:
+
+```yaml
+oauth:
+  google:    { client_id: "1234-abc.apps.googleusercontent.com", client_secret_env: GOOGLE_OAUTH_CLIENT_SECRET }
+  microsoft: { client_id: "00000000-0000-0000-0000-000000000000" }   # public client, PKCE only
+```
+
+Instead of an environment variable, an admin can keep the secret in the vault:
+`./bin/bosun credentials set oauth client_secret:google` (shared; hidden
+prompt). Google treats even Desktop app secrets as confidential-ish, so do not
+commit them.
+
+**Redirect URIs.** The provider redirects the browser to `bosund` itself, at
+`/oauth/callback` on the address the CLI used:
+
+- `http://127.0.0.1:<port>/oauth/callback` for the default loopback daemon
+  (works with a Google *Desktop app* client as is);
+- `https://<host>:<port>/oauth/callback` when you use Bosun from other devices
+  over TLS. Google only allows that with a *Web application* client whose
+  authorized redirect URIs list it (and Google requires a real domain name,
+  not a bare LAN IP); the simpler path is to run `bosun connect` on the
+  machine running `bosund`, through the loopback address.
+
+**Microsoft** (personal, work and school accounts, `common` tenant, v2
+endpoints): register an app in *Microsoft Entra ID → App registrations*, add
+the *Mobile and desktop applications* platform with redirect URI
+`http://127.0.0.1/oauth/callback` (Microsoft ignores the port of loopback
+redirect URIs; if the portal refuses `127.0.0.1`, add it in the app manifest;
+for LAN use also add `https://<host>:<port>/oauth/callback`), and enable
+*Allow public client flows*. No secret is needed. Bundles: `email`
+(`Mail.ReadWrite`, `Mail.Send`), `calendar` (`Calendars.ReadWrite`), `tasks`
+(`Tasks.ReadWrite`), `drive` (`Files.Read`), all on Microsoft Graph.
+
 ### Using Bosun from other devices (LAN)
 
 By default `bosund` listens on `127.0.0.1` only. To reach it from your phone or

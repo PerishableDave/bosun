@@ -432,6 +432,26 @@ Per-user, local, inspectable.
   (`bosun credentials set`, secret from stdin or a hidden prompt). The kind
   must be declared by the integration's manifest; every write and delete is
   audited (kind `config`) without the secret.
+- **OAuth account linking** (`internal/oauth`): `bosun connect <provider>`
+  (built in: `google`, and `microsoft` via the `common` tenant's v2 endpoints;
+  client IDs under `oauth:` in `bosun.yaml`, client secrets from an env var
+  or the shared vault credential `oauth`/`client_secret:<provider>`) runs an
+  authorization-code flow with PKCE (S256) and no external OAuth library. The
+  daemon creates a single-use, 10-minute, in-memory state; the provider
+  redirects the browser to `bosund`'s unauthenticated `GET /oauth/callback`,
+  which exchanges the code, reads the account email from userinfo and stores
+  the tokens as the user's credential (`oauth`, `oauth2:<provider>`). The
+  manager registers itself with the vault as the `KindResolver` for the
+  `oauth2:` prefix, so `SourceFor(anyIntegration, ScopePerUser).Get(ctx,
+  "oauth2:google")` returns the *calling user's* Google account: `Secret` is an
+  access token valid for at least 2 more minutes (refreshed inside `Get`,
+  single-flight per user and provider, rotated refresh tokens persisted),
+  `Fields` holds `email`, `scopes` and `provider` (never the refresh token),
+  and `Expiry` the token's expiry. A revoked grant yields an error wrapping
+  `ErrNoCredential` that tells the user to run `bosun connect` again. Shared
+  integrations never see linked accounts. Scope *bundles* (`email`,
+  `calendar`, `tasks`, `drive`, ...) let integrations document what to
+  request. Link and unlink are audited (kind `config`) without tokens.
 - Integration *configuration* (which integrations are enabled, endpoints) is
   admin-level. *Credentials* are per user for `ScopePerUser` integrations;
   `ScopeShared` integrations (one household backend, e.g. the MCP bridge) use
