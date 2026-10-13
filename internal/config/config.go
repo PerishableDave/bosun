@@ -37,6 +37,22 @@ type DaemonConfig struct {
 	Listen  string    `yaml:"listen"`
 	DataDir string    `yaml:"data_dir"`
 	TLS     TLSConfig `yaml:"tls"`
+	// Timezone is the IANA zone (e.g. "Europe/Madrid") routine cron
+	// schedules are evaluated in; empty means the system's local zone.
+	Timezone string `yaml:"timezone,omitempty"`
+}
+
+// Location returns the time zone named by daemon.timezone (time.Local when
+// empty).
+func (d DaemonConfig) Location() (*time.Location, error) {
+	if d.Timezone == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(d.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("daemon.timezone %q: %w", d.Timezone, err)
+	}
+	return loc, nil
 }
 
 // TLSConfig configures HTTPS. TLS is required when listening on a
@@ -361,6 +377,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Daemon.TLS.Enabled && (c.Daemon.TLS.CertFile == "" || c.Daemon.TLS.KeyFile == "") {
 		add("daemon.tls: cert_file and key_file are required when enabled")
+	}
+	if _, err := c.Daemon.Location(); err != nil {
+		errs = append(errs, err)
 	}
 
 	prov, model, ok := strings.Cut(c.LLM.Default, "/")

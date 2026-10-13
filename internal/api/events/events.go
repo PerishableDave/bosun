@@ -17,7 +17,19 @@ const (
 	TypeApprovalResolved = "approval_resolved"
 	TypeDone             = "done"
 	TypeError            = "error"
+	// TypeRoutineFinished announces that a routine run ended.
+	TypeRoutineFinished = "routine_finished"
 )
+
+// RoutineFinishedData reports the outcome of a routine run to its owner.
+// Status is "done", "error", or "canceled"; the reply is in the run (GET
+// /v1/routines/{id}/runs) and its conversation.
+type RoutineFinishedData struct {
+	RoutineID      int64  `json:"routine_id"`
+	RunID          int64  `json:"run_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Status         string `json:"status"`
+}
 
 // Event is one SSE event: Type becomes the SSE "event:" field and Data is
 // JSON-encoded into the "data:" field.
@@ -92,6 +104,8 @@ func ConversationOf(ev Event) string {
 	case DoneData:
 		return d.ConversationID
 	case ErrorData:
+		return d.ConversationID
+	case RoutineFinishedData:
 		return d.ConversationID
 	}
 	return ""
