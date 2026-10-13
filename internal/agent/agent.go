@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dperedo/bosun/internal/api/events"
@@ -22,6 +23,7 @@ import (
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/integration"
 	"github.com/dperedo/bosun/internal/llm"
+	"github.com/dperedo/bosun/internal/memory"
 	"github.com/dperedo/bosun/internal/store"
 )
 
@@ -86,6 +88,19 @@ type Agent struct {
 	log          *slog.Logger
 	steps        int
 	maxTokens    int
+
+	mem         *memory.Store
+	extractor   *memory.Extractor
+	recallLimit int
+
+	// Background work (memory extraction). bgMu orders bg.Add against
+	// bg.Wait and Close.
+	base     context.Context
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgMu     sync.Mutex
+	bgClosed bool
+	bg       sync.WaitGroup
 }
 
 // New returns an Agent. defaultModel is a "<provider>/<model>" reference
@@ -96,10 +111,12 @@ func New(reg *llm.Registry, defaultModel string, disp *dispatch.Dispatcher, tool
 
 func newAgent(reg *llm.Registry, defaultModel string, disp *dispatch.Dispatcher, tools *integration.Registry, st Store, bus events.Publisher, opts ...Option) *Agent {
 	a := &Agent{llms: reg, defaultModel: defaultModel, disp: disp, tools: tools, st: st, bus: bus,
-		log: slog.New(slog.DiscardHandler), steps: DefaultStepBudget}
+		log: slog.New(slog.DiscardHandler), steps: DefaultStepBudget, recallLimit: DefaultRecallLimit,
+		base: context.Background()}
 	for _, o := range opts {
 		o(a)
 	}
+	a.bgCtx, a.bgCancel = context.WithCancel(a.base)
 	return a
 }
 
@@ -121,8 +138,13 @@ func (e *turnError) Unwrap() error { return e.err }
 // finishes with exactly one done or error event. The returned error is nil
 // iff done was published.
 func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText string) (err error) {
+	var reply strings.Builder // assistant text of this turn, for memory extraction
 	defer func() {
 		if err == nil {
+			// Start extraction before done is published, so a client that
+			// has seen done can rely on Wait covering this turn.
+			a.extractAsync(memory.Turn{UserID: userID, ConversationID: conversationID,
+				UserText: userText, AssistantText: reply.String()})
 			a.publish(userID, events.TypeDone, events.DoneData{ConversationID: conversationID})
 			return
 		}
@@ -159,10 +181,11 @@ func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText 
 		return err
 	}
 	names, specs := a.toolSpecs()
+	system := a.systemPrompt(ctx, userID, userText)
 
 	sent := 0 // history[:sent] has already been sent to the model (for audit content)
 	for step := 1; step <= a.steps; step++ {
-		req := llm.Request{Model: model, System: SystemPrompt, Messages: names.encode(history), Tools: specs, MaxTokens: a.maxTokens}
+		req := llm.Request{Model: model, System: system, Messages: names.encode(history), Tools: specs, MaxTokens: a.maxTokens}
 		resp, err := a.callModel(ctx, prov, req, names, userID, conversationID)
 		a.recordLLM(userID, prov.Name(), model, step, history[sent:], resp, err)
 		sent = len(history)
@@ -178,6 +201,12 @@ func (a *Agent) Run(ctx context.Context, userID int64, conversationID, userText 
 			return err
 		}
 		history = append(history, msg)
+		if t := msg.Text(); t != "" {
+			if reply.Len() > 0 {
+				reply.WriteString("\n\n")
+			}
+			reply.WriteString(t)
+		}
 
 		uses := msg.ToolUses()
 		if len(uses) == 0 {

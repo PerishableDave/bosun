@@ -17,7 +17,7 @@ without it, never in `bosund`) answers `501 not_implemented`.
 - **Bodies.** Requests are a single JSON object (`Content-Type:
   application/json`), max 1 MiB. Unknown fields are rejected with `400`.
 - **Timestamps** are RFC 3339 strings in UTC.
-- **IDs.** Users are integers. Conversations (`conv_…`) and approvals
+- **IDs.** Users and memories are integers. Conversations (`conv_…`) and approvals
   (`appr_…`) are opaque strings.
 - **Isolation.** Every resource is scoped to the authenticated user. A
   resource owned by another user is reported as `404`, with one exception:
@@ -297,6 +297,79 @@ Response `200`:
   ]
 }
 ```
+
+### `GET /v1/memory`
+
+The caller's memories: facts, preferences, summaries, and notes the agent
+recalls into its system prompt. Some are created automatically after each
+successful turn (`source` is `"conv:<conversation id>"`), others by the user
+(`source` is `"user"`).
+
+Query parameters (all optional):
+
+| Param | Meaning |
+|---|---|
+| `q` | Full-text search; every word must match. Results are ordered by relevance (FTS5 bm25). Words are matched literally: quotes, `*`, `AND`/`OR`/`NOT`, `NEAR(…)` and other FTS syntax are not interpreted. Without `q`, results are ordered most recently updated first. |
+| `kind` | `fact`, `preference`, `summary`, or `note` |
+| `limit` | 1–500, default 50 |
+| `offset` | ≥ 0, default 0 |
+
+Response `200`:
+
+```json
+{
+  "memories": [
+    {
+      "id": 7,
+      "kind": "note",
+      "content": "Alice's boat is called Sea Breeze.",
+      "source": "conv:conv_3f…",
+      "created_at": "2026-10-12T22:00:00Z",
+      "updated_at": "2026-10-12T22:00:00Z"
+    }
+  ]
+}
+```
+
+Errors: `400` (bad `kind`, `limit`, or `offset`).
+
+### `POST /v1/memory`
+
+Adds a memory for the caller.
+
+Request:
+
+```json
+{ "kind": "preference", "content": "Prefers metric units." }
+```
+
+`kind` is `fact`, `preference`, `summary`, or `note`. `content` is trimmed and
+must be non-empty and at most 4000 bytes.
+
+Response `201`: the memory object (`source` is `"user"`).
+
+Errors: `400` (bad kind or content).
+
+### `PUT /v1/memory/{id}`
+
+Replaces the content of one of the caller's memories (the kind is kept).
+
+Request:
+
+```json
+{ "content": "Prefers imperial units." }
+```
+
+Response `200`: the updated memory object.
+
+Errors: `400` (empty or oversized content), `404` (no such memory, or it
+belongs to another user).
+
+### `DELETE /v1/memory/{id}`
+
+Deletes one of the caller's memories. Response `204 No Content`.
+
+Errors: `404` (no such memory, or it belongs to another user).
 
 ---
 

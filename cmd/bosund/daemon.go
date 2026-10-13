@@ -26,6 +26,7 @@ import (
 	"github.com/dperedo/bosun/internal/integrations/websearch"
 	"github.com/dperedo/bosun/internal/llm"
 	"github.com/dperedo/bosun/internal/llm/providers"
+	"github.com/dperedo/bosun/internal/memory"
 	"github.com/dperedo/bosun/internal/policy"
 	"github.com/dperedo/bosun/internal/store"
 	"github.com/dperedo/bosun/internal/vault"
@@ -59,6 +60,7 @@ type daemon struct {
 	auth         *auth.Service
 	bus          *events.Bus
 	integrations []integration.Integration
+	agent        *agent.Agent
 	handler      http.Handler
 }
 
@@ -159,13 +161,26 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 
 	// Dispatcher and agent.
 	disp := dispatch.New(tools, engine, appr, auditLog, hooks.NewRegistry(), d.bus, dispatch.WithLogger(log))
-	ag := agent.New(llms, cfg.LLM.Default, disp, tools, d.store, d.bus,
-		agent.WithAudit(auditLog), agent.WithLogger(log))
+	agentOpts := []agent.Option{agent.WithAudit(auditLog), agent.WithLogger(log), agent.WithBaseContext(ctx)}
+	mem := memory.NewStore(d.store)
+	if cfg.Memory.IsEnabled() {
+		extProv, extModel, err := llms.Resolve(cfg.ExtractModelRef())
+		if err != nil {
+			return nil, fmt.Errorf("memory.extract_model: %w", err)
+		}
+		ext := memory.NewExtractor(mem, extProv, extModel,
+			memory.WithExtractLogger(log), memory.WithExtractAudit(auditLog))
+		agentOpts = append(agentOpts, agent.WithMemory(mem, ext), agent.WithRecallLimit(cfg.Memory.RecallLimit))
+		log.Info("memory enabled", "extract_model", cfg.ExtractModelRef(), "recall_limit", cfg.Memory.RecallLimit)
+	} else {
+		log.Info("memory disabled; stored memories stay editable through the API")
+	}
+	d.agent = agent.New(llms, cfg.LLM.Default, disp, tools, d.store, d.bus, agentOpts...)
 
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
-		Conversations: d.store, Agent: ag, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
-		Tools: tools, Audit: auditLog,
+		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
+		Tools: tools, Audit: auditLog, Memories: mem,
 	})
 	if err != nil {
 		return nil, err
@@ -268,9 +283,14 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
-// Close releases integrations and then the store. It is safe on a partially
-// built daemon.
+// Close cancels and waits for the agent's background work (memory
+// extraction), then releases integrations and the store. It is safe on a
+// partially built daemon.
 func (d *daemon) Close() {
+	if d.agent != nil {
+		d.agent.Close()
+		d.agent = nil
+	}
 	for i := len(d.integrations) - 1; i >= 0; i-- {
 		in := d.integrations[i]
 		if err := in.Close(); err != nil {

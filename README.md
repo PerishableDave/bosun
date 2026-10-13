@@ -11,8 +11,9 @@ the how. The HTTP API is documented in [docs/API.md](docs/API.md).
 MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
 policy, approvals, an audit log, and an encrypted credential vault. The only
 built-in integration so far is `websearch` (`websearch.fetch` for public web
-pages; `websearch.search` needs a SearXNG instance). Calendar, email, notes,
-memory, routines, the MCP bridge, and the web UI are not built yet.
+pages; `websearch.search` needs a SearXNG instance) and per-user memory.
+Calendar, email, notes, routines, the MCP bridge, and the web UI are not built
+yet.
 
 ## Quick start
 
@@ -60,6 +61,24 @@ write: ask, destructive: ask). "ask" pauses the tool call until you answer;
 ./bin/bosun policy list
 ./bin/bosun policy unset websearch.fetch      # back to the risk default
 ```
+
+### Memory
+
+After each turn a cheap model pass proposes things worth remembering about you
+(facts, preferences, and anything you ask it to "remember that …"); relevant
+memories are added to the system prompt of later turns. Memories are private to
+each user and fully editable:
+
+```sh
+./bin/bosun memory list                       # newest first; --kind note, --search "dentist"
+./bin/bosun memory add preference "Prefers metric units."
+./bin/bosun memory edit 7 "Boat is called Wave Runner."
+./bin/bosun memory forget 7
+```
+
+Configure it under `memory:` in `bosun.yaml` (all optional):
+`enabled: true`, `extract_model: ""` (empty = `llm.default`; a small, cheap
+model is a good choice), `recall_limit: 8`.
 
 ### Audit log
 

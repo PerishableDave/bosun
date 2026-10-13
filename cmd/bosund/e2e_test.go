@@ -76,6 +76,7 @@ type harness struct {
 	base  string
 	d     *daemon
 	llm   *fake.Provider
+	mem   *fake.Provider // memory extraction model (memory.extract_model)
 	stub  *stub
 	page  string // URL served by an httptest server
 	alice *auth.User
@@ -89,7 +90,8 @@ func newHarness(t *testing.T) *harness {
 daemon: { listen: "127.0.0.1:0", data_dir: %q }
 llm:
   default: fake/test-model
-  providers: { fake: {} }
+  providers: { fake: {}, mem: {} }
+memory: { extract_model: mem/extractor }
 integrations:
   websearch: { enabled: true }
 policy:
@@ -107,10 +109,13 @@ users:
 	}))
 	t.Cleanup(page.Close)
 
-	h := &harness{t: t, llm: fake.New("fake"), stub: &stub{}, page: page.URL}
+	h := &harness{t: t, llm: fake.New("fake"), mem: fake.New("mem"), stub: &stub{}, page: page.URL}
 	h.llm.ChunkSize = 5
 	reg := llm.NewRegistry()
 	if err := reg.Register(h.llm); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(h.mem); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,6 +257,9 @@ func (h *harness) turn(tok, convID, text string, onEvent func(sseEvent)) []sseEv
 	if last := evs[len(evs)-1].Type; last != "done" && last != "error" {
 		h.t.Fatalf("stream ended with %q, want done or error", last)
 	}
+	// Memory extraction runs in the background after done; wait for it so
+	// the scripted providers and the audit log are deterministic.
+	h.d.agent.Wait()
 	return evs
 }
 
@@ -360,9 +368,20 @@ func TestEndToEnd(t *testing.T) {
 		if err != nil || len(entries) != 1 || entries[0].Tool != "stub.read" || entries[0].Decision != "allow" {
 			t.Fatalf("tool_call audit = %+v, %v", entries, err)
 		}
-		llmEntries, err := h.d.store.ListAudit(context.Background(), store.AuditFilter{UserID: h.alice.ID, Kind: "llm_request"})
-		if err != nil || len(llmEntries) != 2 {
-			t.Fatalf("llm_request audit = %d entries, %v", len(llmEntries), err)
+		all, err := h.d.store.ListAudit(context.Background(), store.AuditFilter{UserID: h.alice.ID, Kind: "llm_request"})
+		var llmEntries []*store.AuditEntry
+		extraction := 0
+		for _, e := range all {
+			var d map[string]any
+			json.Unmarshal(e.Detail, &d)
+			if d["purpose"] == "memory_extraction" {
+				extraction++ // the post-turn memory extraction call (mem provider)
+				continue
+			}
+			llmEntries = append(llmEntries, e)
+		}
+		if err != nil || len(llmEntries) != 2 || extraction != 1 {
+			t.Fatalf("llm_request audit = %d turn entries, %d extraction entries, %v", len(llmEntries), extraction, err)
 		}
 		var detail map[string]any
 		json.Unmarshal(llmEntries[0].Detail, &detail)
@@ -503,6 +522,77 @@ func TestEndToEnd(t *testing.T) {
 		evs := h.turn(alice, conv, "hello?", nil)
 		if last := evs[len(evs)-1]; last.Type != "error" || !strings.Contains(field(last, "message"), "model request failed") {
 			t.Errorf("last event = %s %s", last.Type, last.Data)
+		}
+	})
+
+	t.Run("memory: extracted after a turn, recalled in the next, private", func(t *testing.T) {
+		const note = "Alice's boat is called Sea Breeze."
+		mconv := h.newConversation(alice)
+		memReqs := len(h.mem.Requests())
+
+		// Turn 1: plain reply; the extraction call proposes a note.
+		h.llm.Push(fake.Text("Got it."))
+		h.mem.Push(fake.Text(`{"memories":[{"kind":"note","content":"` + note + `"}]}`))
+		if evs := h.turn(alice, mconv, "Remember that my boat is called Sea Breeze.", nil); evs[len(evs)-1].Type != "done" {
+			t.Fatalf("turn 1 = %v", types(evs))
+		}
+		reqs := h.mem.Requests()
+		if len(reqs) != memReqs+1 || reqs[memReqs].Model != "extractor" ||
+			!strings.Contains(reqs[memReqs].Messages[0].Text(), "Remember that my boat is called Sea Breeze.") ||
+			!strings.Contains(reqs[memReqs].Messages[0].Text(), "Got it.") {
+			t.Fatalf("extraction requests = %+v", reqs[memReqs:])
+		}
+
+		var list api.MemoryListResponse
+		if c := h.do("GET", "/v1/memory", alice, nil, &list); c != 200 || len(list.Memories) != 1 {
+			t.Fatalf("alice GET /v1/memory = %d %+v", c, list)
+		}
+		m := list.Memories[0]
+		if m.Kind != "note" || m.Content != note || m.Source != "conv:"+mconv {
+			t.Errorf("memory = %+v", m)
+		}
+
+		// Turn 2: the note is recalled into the system prompt.
+		h.llm.Push(fake.Text("It's called Sea Breeze."))
+		h.mem.Push(fake.Text(`{"memories":[]}`))
+		n := len(h.llm.Requests())
+		h.turn(alice, mconv, "What is my boat called?", nil)
+		sys := h.llm.Requests()[n].System
+		if !strings.Contains(sys, "What you remember about this user") || !strings.Contains(sys, "- (note) "+note) {
+			t.Errorf("turn 2 system prompt does not carry the note:\n%s", sys)
+		}
+		if h.mem.Remaining() != 0 {
+			t.Errorf("extraction script not consumed: %d left", h.mem.Remaining())
+		}
+
+		// Bob sees nothing and cannot delete or edit alice's memory.
+		var bobList api.MemoryListResponse
+		if c := h.do("GET", "/v1/memory", bob, nil, &bobList); c != 200 || len(bobList.Memories) != 0 {
+			t.Errorf("bob GET /v1/memory = %d %+v", c, bobList)
+		}
+		if c := h.do("GET", "/v1/memory?q=boat", bob, nil, &bobList); c != 200 || len(bobList.Memories) != 0 {
+			t.Errorf("bob search = %d %+v", c, bobList)
+		}
+		path := fmt.Sprintf("/v1/memory/%d", m.ID)
+		if c := h.do("DELETE", path, bob, nil, nil); c != 404 {
+			t.Errorf("bob deletes alice's memory = %d, want 404", c)
+		}
+		if c := h.do("PUT", path, bob, api.UpdateMemoryRequest{Content: "x"}, nil); c != 404 {
+			t.Errorf("bob edits alice's memory = %d, want 404", c)
+		}
+		// Bob's turns never see alice's memories.
+		bconv := h.newConversation(bob)
+		h.llm.Push(fake.Text("No idea."))
+		n = len(h.llm.Requests())
+		h.turn(bob, bconv, "What is my boat called?", nil)
+		if sys := h.llm.Requests()[n].System; strings.Contains(sys, "Sea Breeze") {
+			t.Errorf("bob's system prompt carries alice's memory:\n%s", sys)
+		}
+		if c := h.do("GET", "/v1/memory", alice, nil, &list); c != 200 || len(list.Memories) != 1 {
+			t.Errorf("alice's memory after bob's attempts = %d %+v", c, list)
+		}
+		if c := h.do("DELETE", path, alice, nil, nil); c != 204 {
+			t.Errorf("alice deletes her memory = %d", c)
 		}
 	})
 }

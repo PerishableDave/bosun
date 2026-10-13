@@ -29,6 +29,7 @@ type Config struct {
 	Hooks        HooksConfig                  `yaml:"hooks"`
 	Audit        AuditConfig                  `yaml:"audit"`
 	Telemetry    TelemetryConfig              `yaml:"telemetry"`
+	Memory       MemoryConfig                 `yaml:"memory,omitempty"`
 }
 
 // DaemonConfig controls how bosund listens and where it keeps data.
@@ -136,6 +137,30 @@ type AuditConfig struct {
 	LogContent bool `yaml:"log_content"`
 }
 
+// MemoryConfig configures per-user memory (recall into the system prompt and
+// extraction after each turn). The whole section is optional.
+type MemoryConfig struct {
+	// Enabled turns memory recall and extraction on (default true).
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// ExtractModel is the "<provider>/<model>" used for extraction; empty
+	// means llm.default.
+	ExtractModel string `yaml:"extract_model,omitempty"`
+	// RecallLimit is how many relevance-ranked memories are recalled per
+	// turn (default 8).
+	RecallLimit int `yaml:"recall_limit,omitempty"`
+}
+
+// IsEnabled reports whether memory is enabled.
+func (m MemoryConfig) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
+
+// ExtractModelRef returns the model reference used for extraction.
+func (c *Config) ExtractModelRef() string {
+	if c.Memory.ExtractModel != "" {
+		return c.Memory.ExtractModel
+	}
+	return c.LLM.Default
+}
+
 // TelemetryConfig is opt-in telemetry (off by default).
 type TelemetryConfig struct {
 	Enabled bool `yaml:"enabled"`
@@ -147,6 +172,7 @@ const (
 	DefaultDataDir         = "~/.bosun"
 	DefaultModel           = "anthropic/claude-sonnet-5-5"
 	DefaultApprovalTimeout = 15 * time.Minute
+	DefaultRecallLimit     = 8
 	FileName               = "bosun.yaml"
 )
 
@@ -259,6 +285,9 @@ func (c *Config) applyDefaults() {
 	if c.Policy.ApprovalTimeout == 0 {
 		c.Policy.ApprovalTimeout = d.Policy.ApprovalTimeout
 	}
+	if c.Memory.RecallLimit == 0 {
+		c.Memory.RecallLimit = DefaultRecallLimit
+	}
 }
 
 // pathKey reports whether an integration setting key holds a filesystem path.
@@ -339,6 +368,17 @@ func (c *Config) Validate() error {
 		add("llm.default %q: must be <provider>/<model>", c.LLM.Default)
 	} else if _, ok := c.LLM.Providers[prov]; !ok {
 		add("llm.default %q: provider %q is not configured under llm.providers", c.LLM.Default, prov)
+	}
+	if c.Memory.ExtractModel != "" {
+		prov, model, ok := strings.Cut(c.Memory.ExtractModel, "/")
+		if !ok || prov == "" || model == "" {
+			add("memory.extract_model %q: must be <provider>/<model>", c.Memory.ExtractModel)
+		} else if _, ok := c.LLM.Providers[prov]; !ok {
+			add("memory.extract_model %q: provider %q is not configured under llm.providers", c.Memory.ExtractModel, prov)
+		}
+	}
+	if c.Memory.RecallLimit < 0 {
+		add("memory.recall_limit: must not be negative")
 	}
 	for name := range c.LLM.Providers {
 		if !nameRe.MatchString(name) {

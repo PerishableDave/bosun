@@ -297,15 +297,25 @@ routines:
 
 Per-user, local, inspectable.
 
-- Storage: SQLite tables `memories(user_id, kind, content, source, created_at)`
-  with an FTS5 index. Optional embedding column populated through the
-  configured provider; retrieval falls back to FTS when embeddings are off.
+- Storage: SQLite table `memories(user_id, kind, content, source, created_at,
+  updated_at)` with an FTS5 index. The `embedding` column is reserved;
+  retrieval is FTS only for now (embeddings may be added later).
 - Kinds: `fact` (about the user), `preference`, `summary` (of past
-  conversations), `note` (explicit "remember this").
-- Extraction: after each turn, a cheap model pass proposes memories; they are
-  stored with `source` pointing at the conversation.
-- Control: `bosun memory list|show|edit|forget` and the equivalent UI page.
-  Users see only their own memory; admins cannot read other users' memory.
+  conversations; reserved, never created by extraction), `note` (explicit
+  "remember this").
+- Recall: each turn, the top `memory.recall_limit` memories by bm25 relevance
+  to the user's message plus the user's preferences are added to the system
+  prompt in a delimited "What you remember about this user" section. They are
+  the user's own data, so they are not wrapped as untrusted.
+- Extraction: after each turn that ends with `done`, a cheap model pass
+  (`memory.extract_model`, default `llm.default`) proposes memories as strict
+  JSON; at most 5 per turn, each ≤ 500 bytes, deduplicated against existing
+  ones. They are stored with `source = "conv:<conversation id>"`. It runs in
+  the background under the daemon's context (30s timeout) and is audited as an
+  `llm_request` with `purpose: memory_extraction`.
+- Control: `bosun memory list|add|edit|forget` (and `GET/POST/PUT/DELETE
+  /v1/memory`). Users see only their own memory; admins cannot read other
+  users' memory.
 
 ## Users, auth, and credentials
 

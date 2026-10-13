@@ -185,3 +185,33 @@ func TestExpandPath(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryConfig(t *testing.T) {
+	cfg, err := Parse([]byte("daemon: { data_dir: /tmp/x }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Memory.IsEnabled() || cfg.Memory.RecallLimit != DefaultRecallLimit || cfg.ExtractModelRef() != DefaultModel {
+		t.Errorf("memory defaults = %+v, extract %q", cfg.Memory, cfg.ExtractModelRef())
+	}
+	cfg, err = Parse([]byte(`
+daemon: { data_dir: /tmp/x }
+memory: { enabled: false, extract_model: ollama/llama3, recall_limit: 3 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Memory.IsEnabled() || cfg.Memory.RecallLimit != 3 || cfg.ExtractModelRef() != "ollama/llama3" {
+		t.Errorf("memory = %+v, extract %q", cfg.Memory, cfg.ExtractModelRef())
+	}
+	for _, bad := range []string{
+		"memory: { extract_model: nope }",
+		"memory: { extract_model: missing/model }",
+		"memory: { recall_limit: -1 }",
+		"memory: { bogus: 1 }",
+	} {
+		if _, err := Parse([]byte("daemon: { data_dir: /tmp/x }\n" + bad + "\n")); err == nil {
+			t.Errorf("%s: accepted", bad)
+		}
+	}
+}
