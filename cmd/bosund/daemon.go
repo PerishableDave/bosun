@@ -24,6 +24,7 @@ import (
 	"github.com/dperedo/bosun/internal/dispatch"
 	"github.com/dperedo/bosun/internal/hooks"
 	"github.com/dperedo/bosun/internal/integration"
+	"github.com/dperedo/bosun/internal/integrations/calendar"
 	"github.com/dperedo/bosun/internal/integrations/mcp"
 	"github.com/dperedo/bosun/internal/integrations/notes"
 	"github.com/dperedo/bosun/internal/integrations/websearch"
@@ -41,6 +42,7 @@ import (
 // `integrations:` in bosun.yaml.
 var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"websearch": func(*slog.Logger) integration.Integration { return websearch.New() },
+	"calendar":  func(*slog.Logger) integration.Integration { return calendar.New() },
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
@@ -258,6 +260,11 @@ func (d *daemon) enabledIntegrations(dp deps) []integration.Integration {
 		in := mk(d.log)
 		if n, ok := in.(*notes.Integration); ok {
 			n.SetUserDirFunc(d.username) // per-user notes live in <dir>/<username>/
+		}
+		if c, ok := in.(*calendar.Integration); ok {
+			if loc, err := d.cfg.Daemon.Location(); err == nil { // validated at config load
+				c.SetLocation(loc) // default zone for "today", floating times, unknown TZIDs
+			}
 		}
 		out = append(out, in)
 	}

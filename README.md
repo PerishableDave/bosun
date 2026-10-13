@@ -14,7 +14,8 @@ Built-in integrations so far are `websearch` (`websearch.fetch` for public web
 pages; `websearch.search` needs a SearXNG instance) and `notes` (Markdown
 files, off by default), plus per-user memory, the MCP bridge (third-party
 tools from external MCP servers), routines (scheduled and event-driven runs),
-and the web UI. Calendar and email are not built yet.
+and the web UI. `calendar` (CalDAV: Google, iCloud, Fastmail, Nextcloud, ...)
+is built too; email is not built yet.
 
 ## Quick start
 
@@ -116,6 +117,58 @@ integrations:
 - Paths are relative to the notes folder. Absolute paths, `..`, hidden
   files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
   point outside the folder are refused. Reads return at most 200 KB.
+
+### Calendar
+
+The `calendar` integration reads and edits each user's own calendars over
+CalDAV, so it works with Google Calendar, iCloud, Fastmail, Nextcloud,
+Radicale, Baïkal and other CalDAV servers. Enable it in `bosun.yaml` and
+restart `bosund`:
+
+```yaml
+integrations:
+  calendar:
+    enabled: true     # backend: caldav (the only one, and the default)
+```
+
+Then each user links their own account (accounts are per user and stored in
+the vault):
+
+- **Google:** `bosun connect google --scopes caldav` (combinable, e.g.
+  `--scopes imap,caldav`). CalDAV needs the full
+  `https://www.googleapis.com/auth/calendar` scope, which the `caldav` bundle
+  requests.
+- **iCloud:** create an app-specific password at appleid.apple.com (Sign-In
+  and Security → App-Specific Passwords), then
+  `bosun credentials set calendar password --field url=https://caldav.icloud.com --field user=you@icloud.com`
+  and paste it at the prompt. Your normal Apple ID password will not work.
+- **Fastmail:** an app password with CalDAV access, `--field url=https://caldav.fastmail.com`
+  and your Fastmail address as `user`.
+- **Nextcloud / Radicale / Baïkal / others:** the server root (discovered via
+  `/.well-known/caldav`) or your principal/calendar URL, e.g.
+  `--field url=https://cloud.example.com/remote.php/dav --field user=dave`
+  (use an app password where the server offers them).
+- Optional `--field calendar=Work` picks the default calendar for new events
+  (otherwise the first writable one).
+
+Google is used if linked, otherwise the password account. Credentials are only
+sent over `https://` (plain `http://` is refused except to localhost), and
+only to the configured host's domain.
+
+- Tools: `calendar.calendars`, `calendar.events` (from/to as RFC 3339, a
+  local time, a date, or `today`/`tomorrow`/`this week`/`next week`/`this
+  month`, in `daemon.timezone` unless a `timezone` is given; recurrences
+  expanded, at most 200), `calendar.get`, `calendar.freebusy` (merged busy
+  time across writable calendars), all `calendar.read`; `calendar.create` and
+  `calendar.update` (`calendar.write`, asks by default; updates use ETags and
+  fail with a conflict if the event changed meanwhile); `calendar.delete`
+  (`calendar.delete`, destructive).
+- Event text is untrusted (anyone can send you an invitation), so the model
+  is told never to follow instructions in it.
+- Recurrence support: DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, COUNT, UNTIL,
+  BYDAY (incl. "2nd Tuesday", "last Friday"), BYMONTHDAY, BYMONTH, BYSETPOS,
+  RDATE, EXDATE and moved/cancelled instances. Rarer rules (hourly, BYHOUR,
+  BYWEEKNO, BYYEARDAY) show only the first occurrence, flagged.
 
 ### Hooks
 
