@@ -21,12 +21,26 @@ passwords via `bosun connect email`.
 
 ## Quick start
 
-Requires Go 1.26+.
+Install the two binaries, `bosund` (the daemon) and `bosun` (the CLI), with
+Homebrew (`brew install perishabledave/tap/bosun`) or the install script
+(`curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh`,
+add `-s -- --user` to install into `~/.local/bin` without sudo; it verifies
+the download's checksum), then run `bosun setup`. For a household server
+there is a Docker image (`ghcr.io/perishabledave/bosun`, amd64/arm64) and a
+Compose file with optional Ollama, SearXNG and Caddy in
+[deploy/docker](deploy/docker). **[docs/DEPLOY.md](docs/DEPLOY.md)** walks
+through both setups end to end: running as a background service, where files
+live, upgrades, backups, exposing Bosun safely via Tailscale or a reverse
+proxy, resource needs, and a security checklist.
+
+To build from source instead (Go 1.26+):
 
 ```sh
 make build                    # builds bin/bosund and bin/bosun
 ./bin/bosun setup             # writes ~/.bosun/bosun.yaml, creates the data dir and the first admin
 ```
+
+The examples below use `./bin/bosun`; with an installed release, use `bosun`.
 
 `bosun setup` prompts for LAN access, the listen address, data directory, admin
 username and password; `--lan`, `--listen`, `--data-dir` and `--admin` skip
@@ -680,7 +694,12 @@ sqlite3 ~/.bosun/bosun.db "select ts, kind, tool, decision, error from audit_log
 make test   # go test ./...
 make vet    # go vet ./...
 make lint   # gofmt + vet + integration import guard
+make docker             # build the container image from source (bosun:dev)
+make release-snapshot   # all release archives, checksums, formula and images into dist/, nothing published
 ```
+
+Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` runs
+GoReleaser (`.goreleaser.yaml`).
 
 Dependencies are kept minimal: `modernc.org/sqlite` (pure Go, no cgo),
 `gopkg.in/yaml.v3`, `golang.org/x/crypto` (argon2id), `golang.org/x/term`
@@ -688,4 +707,4 @@ Dependencies are kept minimal: `modernc.org/sqlite` (pure Go, no cgo),
 
 ## License
 
-TBD.
+MIT; see [LICENSE](LICENSE).

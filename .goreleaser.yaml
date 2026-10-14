@@ -1,0 +1,171 @@
+# GoReleaser configuration for Bosun.
+#
+#   Release (CI, on a v* tag):  see .github/workflows/release.yml
+#   Local dry run, no tag:      make release-snapshot
+#                               (goreleaser release --snapshot --clean)
+#
+# A snapshot builds every archive, the checksums file, the Homebrew formula
+# (written to dist/, not pushed) and the Docker images (tagged locally, not
+# pushed). Add --skip=docker when Docker is not running.
+version: 2
+
+project_name: bosun
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: bosund
+    main: ./cmd/bosund
+    binary: bosund
+    env:
+      # modernc.org/sqlite is pure Go: static binaries, trivial cross-compiles.
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - id: bosun
+    main: ./cmd/bosun
+    binary: bosun
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids: [bosund, bosun]
+    formats: [tar.gz]
+    # Version-less names so .../releases/latest/download/<name> always works
+    # (install.sh relies on this): bosun_darwin_arm64.tar.gz, ...
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - docs/DEPLOY.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: perishabledave
+    name: bosun
+  prerelease: auto
+  extra_files:
+    - glob: ./install.sh
+
+brews:
+  - name: bosun
+    ids: [default]
+    repository:
+      owner: perishabledave
+      name: homebrew-tap
+      # A fine-grained PAT with contents:write on perishabledave/homebrew-tap;
+      # the workflow's GITHUB_TOKEN cannot push to another repository.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/perishabledave/bosun
+    description: Personal agent that acts only through integrations you've granted
+    license: MIT
+    commit_author:
+      name: bosun-release-bot
+      email: noreply@github.com
+    commit_msg_template: "bosun {{ .Tag }}"
+    install: |
+      bin.install "bosund"
+      bin.install "bosun"
+    caveats: |
+      Create your config, data directory (~/.bosun) and admin user first:
+        bosun setup
+      then run the daemon in the background:
+        brew services start bosun
+      The service runs `bosund` with its default config, ~/.bosun/bosun.yaml
+      (the file `bosun setup` writes). Logs: #{var}/log/bosun.log
+      See https://github.com/perishabledave/bosun/blob/main/docs/DEPLOY.md
+    # bosund without --config reads $BOSUN_CONFIG, else ~/.bosun/bosun.yaml,
+    # the same default path `bosun setup` writes; services run as the user,
+    # so ~ is the user's home.
+    service: |
+      run [opt_bin/"bosund"]
+      keep_alive true
+      log_path var/"log/bosun.log"
+      error_log_path var/"log/bosun.log"
+      environment_variables PATH: std_service_path_env
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/bosund -version")
+      assert_match version.to_s, shell_output("#{bin}/bosun --version")
+
+dockers:
+  - id: bosun-amd64
+    ids: [bosund, bosun]
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: deploy/docker/Dockerfile.goreleaser
+    image_templates:
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-amd64"
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title=bosun
+      - --label=org.opencontainers.image.source=https://github.com/perishabledave/bosun
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=MIT
+    extra_files:
+      - deploy/docker/bosun.yaml
+      - deploy/docker/entrypoint.sh
+      - deploy/docker/healthcheck.sh
+  - id: bosun-arm64
+    ids: [bosund, bosun]
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: deploy/docker/Dockerfile.goreleaser
+    image_templates:
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-arm64"
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title=bosun
+      - --label=org.opencontainers.image.source=https://github.com/perishabledave/bosun
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=MIT
+    extra_files:
+      - deploy/docker/bosun.yaml
+      - deploy/docker/entrypoint.sh
+      - deploy/docker/healthcheck.sh
+
+docker_manifests:
+  - name_template: "ghcr.io/perishabledave/bosun:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-amd64"
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/perishabledave/bosun:latest"
+    # Pre-releases (v1.2.0-rc.1) get only their version tag.
+    skip_push: auto
+    image_templates:
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-amd64"
+      - "ghcr.io/perishabledave/bosun:{{ .Version }}-arm64"

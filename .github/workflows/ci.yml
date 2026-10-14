@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "These files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+  packaging:
+    name: packaging checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck (POSIX sh)
+        run: shellcheck -s sh install.sh deploy/docker/entrypoint.sh deploy/docker/healthcheck.sh
+
+      - name: install.sh runs under dash
+        run: dash -n install.sh
+
+      - name: compose file is valid
+        working-directory: deploy/docker
+        run: docker compose --profile ollama --profile searxng --profile caddy config -q
+
+      - name: docker build
+        run: docker build --build-arg VERSION=ci -t bosun:ci .

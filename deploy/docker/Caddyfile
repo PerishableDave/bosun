@@ -1,0 +1,29 @@
+# Example Caddy reverse proxy for Bosun (compose profile "caddy").
+#
+# Replace bosun.home.example with a name that resolves to this server on your
+# network (a local DNS entry in your router, Pi-hole, AdGuard, ...).
+#
+# Certificates:
+#   - "tls internal" (below) uses Caddy's own local CA. Install Caddy's root
+#     certificate on your devices to avoid browser warnings; it is in the
+#     caddy-data volume at /data/caddy/pki/authorities/local/root.crt.
+#   - With a real domain you control, delete "tls internal" and Caddy gets a
+#     Let's Encrypt certificate (the name must be publicly resolvable, or use
+#     a DNS-challenge build of Caddy for a private name).
+
+bosun.home.example {
+	tls internal
+
+	# Today bosund serves HTTPS with the self-signed certificate the container
+	# generated (TLS is required on non-loopback addresses). The hop is inside
+	# the compose network, so the certificate is not verified.
+	reverse_proxy https://bosun:7777 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+
+	# Once bosund supports daemon.behind_proxy (and you set it, with
+	# daemon.tls.enabled: false), replace the block above with:
+	# reverse_proxy bosun:7777
+}

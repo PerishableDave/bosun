@@ -1,0 +1,22 @@
+# Minimal SearXNG settings for Bosun (compose profile "searxng").
+# Everything not listed here comes from SearXNG's defaults.
+use_default_settings: true
+
+general:
+  instance_name: "Bosun search"
+
+server:
+  # Overridden by the SEARXNG_SECRET environment variable when set (see
+  # compose.yml). The instance is only reachable inside the compose network.
+  secret_key: "bosun-change-me-set-SEARXNG_SECRET"
+  # Bosun is the only client; the bot limiter would block its API calls.
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  # Bosun's websearch.search calls /search?format=json.
+  formats:
+    - html
+    - json

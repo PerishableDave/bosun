@@ -13,6 +13,10 @@
 *.db-shm
 bosun.yaml
 cli-token
+!deploy/docker/bosun.yaml
+
+# Release artifacts (goreleaser)
+/dist/
 
 # Editor / OS
 .DS_Store

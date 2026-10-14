@@ -1,0 +1,114 @@
+# Bosun on a homelab server. See docs/DEPLOY.md for the full walkthrough.
+#
+#   cd deploy/docker
+#   docker compose up -d                                   # Bosun only
+#   docker compose --profile ollama --profile searxng up -d   # + local LLM + web search
+#   docker compose exec bosun bosun setup --config /data/bosun.yaml --admin <name>
+#
+# Optional profiles:
+#   ollama   local models (Ollama); then: docker compose exec ollama ollama pull llama3.1
+#   searxng  private meta search engine backing websearch.search
+#   caddy    example HTTPS reverse proxy for bosun.home.example (see Caddyfile)
+#
+# Put API keys in a .env file next to this file (never in bosun.yaml), e.g.
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   TELEGRAM_BOT_TOKEN=123456:ABC...
+
+name: bosun
+
+services:
+  bosun:
+    image: ghcr.io/perishabledave/bosun:latest
+    # Build from a source checkout instead of pulling:
+    #   docker compose build bosun   (or: docker compose up -d --build)
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - bosun-data:/data
+    ports:
+      # Loopback only: reachable from this host (and from Tailscale Serve or a
+      # reverse proxy running on it), not from the rest of the network.
+      # To expose on the LAN, don't widen this to 0.0.0.0: put a TLS proxy in
+      # front (the "caddy" profile below, or Tailscale Serve; see DEPLOY.md).
+      - "127.0.0.1:7777:7777"
+    healthcheck:
+      # GET /v1/health over HTTPS (self-signed) or HTTP (behind_proxy).
+      test: ["CMD", "bosun-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Not published on the host: Bosun reaches it at http://ollama:11434.
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit on the host):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # AMD GPU: use image ollama/ollama:rocm and
+    # devices: ["/dev/kfd", "/dev/dri"]
+
+  searxng:
+    profiles: ["searxng"]
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      # Overrides server.secret_key from settings.yml; set it in .env.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+    volumes:
+      # Enables the JSON output format that Bosun's websearch needs.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    # Not published on the host: Bosun reaches it at http://searxng:8080.
+
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Tailscale Serve alternative (recommended; no open ports). Simplest is on
+  # the host, where Tailscale is already installed:
+  #   tailscale serve --bg https+insecure://127.0.0.1:7777
+  # (once bosund runs with behind_proxy and TLS off: tailscale serve --bg 7777)
+  # which serves https://<host>.<tailnet>.ts.net to your tailnet only.
+  # Or as a sidecar container sharing Bosun's network namespace:
+  # tailscale:
+  #   image: tailscale/tailscale:latest
+  #   hostname: bosun
+  #   environment:
+  #     TS_AUTHKEY: ${TS_AUTHKEY}
+  #     TS_STATE_DIR: /var/lib/tailscale
+  #     TS_SERVE_CONFIG: /config/serve.json
+  #   volumes:
+  #     - tailscale-state:/var/lib/tailscale
+  #     - ./tailscale:/config:ro
+  #   network_mode: service:bosun
+  # with ./tailscale/serve.json proxying "https+insecure://127.0.0.1:7777".
+
+volumes:
+  bosun-data:
+  ollama-models:
+  caddy-data:
+  caddy-config:
+  # tailscale-state:

@@ -1,0 +1,76 @@
+# bosun.yaml for the Docker image.
+#
+# The container entrypoint copies this file to /data/bosun.yaml on first run
+# (only when that file does not exist yet). Edit /data/bosun.yaml afterwards,
+# e.g. `docker compose exec bosun vi /data/bosun.yaml`, then
+# `docker compose restart bosun`.
+#
+# Secrets never go in this file: API keys come from the environment (see
+# compose.yml) and account passwords live in the encrypted vault.
+
+daemon:
+  # Listen on all interfaces *inside the container*. compose.yml publishes the
+  # port on the host's loopback (127.0.0.1:7777) only; put Tailscale Serve or
+  # a reverse proxy in front for other devices (see docs/DEPLOY.md).
+  listen: 0.0.0.0:7777
+  data_dir: /data
+
+  # bosund requires TLS on any non-loopback listen address. Until
+  # `daemon.behind_proxy` is available, the entrypoint generates a
+  # self-signed certificate in /data/tls/ on first run (valid for
+  # "bosun", "localhost" and 127.0.0.1), and proxies talk HTTPS to it.
+  tls:
+    enabled: true
+    cert_file: /data/tls/cert.pem
+    key_file: /data/tls/key.pem
+
+  # behind_proxy: true tells bosund it is reached through a trusted reverse
+  # proxy (Caddy, Tailscale Serve) that terminates TLS, so plain HTTP on a
+  # non-loopback address is allowed and X-Forwarded-* headers are honoured.
+  # NOT YET SUPPORTED by this bosund version: once your bosund has it,
+  # uncomment the next line and set tls.enabled above to false.
+  # behind_proxy: true
+
+  web_ui: true
+  # The vault master key is kept in /data/master.key (there is no OS keychain
+  # in a container). Back up the volume to keep your credentials readable.
+  master_key: file
+  # timezone: Europe/Madrid    # for routine schedules; default is UTC here
+
+llm:
+  # A local model by default (start the "ollama" profile and pull it:
+  # `docker compose exec ollama ollama pull llama3.1`). To use Anthropic
+  # instead, set ANTHROPIC_API_KEY for the bosun service and change this to
+  # e.g. anthropic/claude-sonnet-5-5.
+  default: ollama/llama3.1
+  providers:
+    ollama:
+      base_url: http://ollama:11434
+    anthropic:
+      api_key_env: ANTHROPIC_API_KEY
+
+integrations:
+  websearch:
+    enabled: true
+    backend: searxng
+    # The "searxng" compose profile; websearch.fetch works without it.
+    base_url: http://searxng:8080
+  email:
+    enabled: true
+  calendar:
+    enabled: true
+
+channels:
+  telegram:
+    # Idle until a bot token is available: set TELEGRAM_BOT_TOKEN for the
+    # bosun service, or store it in the vault with
+    # `bosun credentials set channels telegram_bot_token --shared`.
+    enabled: true
+    token_env: TELEGRAM_BOT_TOKEN
+
+policy:
+  defaults:
+    read: allow
+    write: ask
+    destructive: ask
+  approval_timeout: 15m

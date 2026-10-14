@@ -1,13 +1,18 @@
 GO ?= go
 BIN := bin
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X main.version=$(VERSION)
+# goreleaser from PATH if installed, else run it through the Go toolchain.
+GORELEASER ?= $(shell command -v goreleaser 2>/dev/null || echo "$(GO) run github.com/goreleaser/goreleaser/v2@latest")
+IMAGE ?= bosun:dev
 
-.PHONY: all build test vet lint fmt clean
+.PHONY: all build test vet lint fmt clean release-snapshot docker
 
 all: build
 
 build:
-	$(GO) build -o $(BIN)/bosund ./cmd/bosund
-	$(GO) build -o $(BIN)/bosun ./cmd/bosun
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/bosund ./cmd/bosund
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/bosun ./cmd/bosun
 
 test:
 	$(GO) test ./...
@@ -24,5 +29,15 @@ lint: vet
 fmt:
 	gofmt -w .
 
+# release-snapshot builds every release artifact into dist/ without a tag and
+# without publishing anything. Pass GORELEASER_FLAGS=--skip=docker when
+# Docker is not running.
+release-snapshot:
+	$(GORELEASER) release --snapshot --clean $(GORELEASER_FLAGS)
+
+# docker builds the image from source for the host platform.
+docker:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE) .
+
 clean:
-	rm -rf $(BIN)
+	rm -rf $(BIN) dist

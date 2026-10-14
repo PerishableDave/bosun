@@ -1,0 +1,23 @@
+# Release image, built by GoReleaser (`dockers` in .goreleaser.yaml) from the
+# already-compiled binaries in the build context. The runtime stage mirrors
+# the repository's Dockerfile; keep them in sync.
+ARG ALPINE_VERSION=3.22
+FROM alpine:${ALPINE_VERSION}
+RUN apk add --no-cache ca-certificates tzdata openssl && \
+    addgroup -g 1000 bosun && \
+    adduser -D -H -u 1000 -G bosun -h /data -s /sbin/nologin bosun && \
+    mkdir -p /data && chown bosun:bosun /data && chmod 700 /data
+COPY bosund bosun /usr/local/bin/
+COPY deploy/docker/bosun.yaml /etc/bosun/bosun.yaml.template
+COPY --chmod=0755 deploy/docker/entrypoint.sh /usr/local/bin/bosun-entrypoint
+COPY --chmod=0755 deploy/docker/healthcheck.sh /usr/local/bin/bosun-healthcheck
+
+ENV BOSUN_CONFIG=/data/bosun.yaml \
+    HOME=/data
+USER bosun:bosun
+WORKDIR /data
+VOLUME /data
+EXPOSE 7777
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["bosun-healthcheck"]
+ENTRYPOINT ["bosun-entrypoint"]
+CMD ["bosund", "--config", "/data/bosun.yaml"]

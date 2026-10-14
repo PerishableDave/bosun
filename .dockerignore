@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+bin
+dist
+data
+*.db
+*.db-wal
+*.db-shm
+bosun.yaml
+!deploy/docker/bosun.yaml
+cli-token
