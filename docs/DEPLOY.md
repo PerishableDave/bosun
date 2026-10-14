@@ -28,12 +28,15 @@ brew install perishabledave/tap/bosun
 checksum of the download):
 
 ```sh
-curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/perishabledave/bosun/main/install.sh | sh
 # no sudo: install into ~/.local/bin
-curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh -s -- --user
+curl -fsSL https://raw.githubusercontent.com/perishabledave/bosun/main/install.sh | sh -s -- --user
 ```
 
-Options: `--user`, `--bin-dir DIR`, `--version v1.2.3`, and `--base-url URL`
+The script itself downloads the binaries from the latest
+[GitHub release](https://github.com/perishabledave/bosun/releases/latest);
+each release also carries a copy of `install.sh` as an asset. Options:
+`--user`, `--bin-dir DIR`, `--version v1.2.3`, and `--base-url URL`
 (a mirror holding `bosun_<os>_<arch>.tar.gz` and `checksums.txt`). You can
 also download an archive from the
 [releases page](https://github.com/perishabledave/bosun/releases) and check it
@@ -254,7 +257,7 @@ code, so the admin never learns their password:
 bosun users add alice            # prints a single-use code valid for 24 hours
 ```
 
-Alice then runs `bosun accept-invite <code> --server https://bosun.home:7777`
+Alice then runs `bosun accept-invite <code> --server https://myhost:7777`
 on her own machine (or opens the web UI and chooses "Have an invite code?"),
 picks a password, and is logged in. From there she connects her own mail and
 calendar with `bosun connect email` / `bosun connect calendar` and links

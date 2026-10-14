@@ -146,7 +146,7 @@ func passwordAccount(c integration.Credential) (*account, error) {
 	user := strings.TrimSpace(f["user"])
 	if host == "" || user == "" {
 		return nil, errors.New("email: the password credential needs --field host=<imap host> and --field user=<login>; " +
-			"e.g. `bosun credentials set email password --field host=imap.fastmail.com --field user=me@fastmail.com`")
+			"e.g. `bosun credentials set email password --field host=imap.fastmail.com --field user=you@fastmail.com`")
 	}
 	if c.Secret == "" {
 		return nil, errors.New("email: the password credential has an empty secret")

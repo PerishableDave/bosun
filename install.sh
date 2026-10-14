@@ -2,7 +2,7 @@
 # Bosun installer: downloads a release archive from GitHub, verifies its
 # SHA-256 checksum, and installs the bosun and bosund binaries.
 #
-#   curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/perishabledave/bosun/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --user          # into ~/.local/bin, no sudo
 #
 # Options:

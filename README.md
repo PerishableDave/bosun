@@ -23,7 +23,7 @@ passwords via `bosun connect email`.
 
 Install the two binaries, `bosund` (the daemon) and `bosun` (the CLI), with
 Homebrew (`brew install perishabledave/tap/bosun`) or the install script
-(`curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh`,
+(`curl -fsSL https://raw.githubusercontent.com/perishabledave/bosun/main/install.sh | sh`,
 add `-s -- --user` to install into `~/.local/bin` without sudo; it verifies
 the download's checksum), then run `bosun setup`. For a household server
 there is a Docker image (`ghcr.io/perishabledave/bosun`, amd64/arm64) and a
@@ -176,7 +176,7 @@ everyone else runs it after `bosun login`):
 ```
 
 ```
-Email address: dave@icloud.com
+Email address: you@icloud.com
 Provider: iCloud Mail (IMAP imap.mail.me.com:993, SMTP smtp.mail.me.com:587 STARTTLS)
 
 iCloud Mail needs an app password (your normal password will not work). To create one:
@@ -184,10 +184,10 @@ iCloud Mail needs an app password (your normal password will not work). To creat
   2. Go to Sign-In and Security → App-Specific Passwords and click + (Generate).
   3. Name it "Bosun" and copy the password (format xxxx-xxxx-xxxx-xxxx).
 
-App password for dave@icloud.com:            ← hidden
+App password for you@icloud.com:            ← hidden
 Testing the connection (IMAP login and SMTP authentication)...
 Connection OK.
-Saved. Bosun can now read and send mail as dave@icloud.com (by default, sending asks you first).
+Saved. Bosun can now read and send mail as you@icloud.com (by default, sending asks you first).
 
 iCloud Calendar works with the same app password. Set up your calendar too? [Y/n]:
 Testing CalDAV at https://caldav.icloud.com...
@@ -225,7 +225,7 @@ through the private iCal link unless you set up OAuth.
 For scripts (no questions; the password comes from stdin):
 
 ```sh
-pass show fastmail-bosun | ./bin/bosun connect email --user me@fastmail.com --password-stdin
+pass show fastmail-bosun | ./bin/bosun connect email --user you@fastmail.com --password-stdin
 ./bin/bosun connect email --user me@example.org --password-stdin \
     --host imap.example.org --smtp-host smtp.example.org --smtp-port 587 < pw.txt
 ```
@@ -239,7 +239,7 @@ The wizard stores a `password` credential, which you can also write directly:
 
 ```sh
 ./bin/bosun credentials set email password \
-    --field host=imap.fastmail.com --field user=me@fastmail.com
+    --field host=imap.fastmail.com --field user=you@fastmail.com
 # prompts for the secret: the app password
 ```
 

@@ -368,14 +368,14 @@ Request (the same shape as a credential, plus its kind):
 
 ```json
 {"kind": "password", "secret": "<app password>",
- "fields": {"host": "imap.fastmail.com", "user": "me@fastmail.com"}}
+ "fields": {"host": "imap.fastmail.com", "user": "you@fastmail.com"}}
 ```
 
 Response `200`, whether or not the credential works:
 
 ```json
 {"ok": true}
-{"ok": false, "error": "wrong password or login refused: imap.gmail.com rejected the login for dave@gmail.com (server said: [AUTHENTICATIONFAILED] Invalid credentials). Gmail only accepts an app password here, ..."}
+{"ok": false, "error": "wrong password or login refused: imap.gmail.com rejected the login for you@gmail.com (server said: [AUTHENTICATIONFAILED] Invalid credentials). Gmail only accepts an app password here, ..."}
 ```
 
 - `email`, kind `password`: logs in over IMAP, then authenticates to the
