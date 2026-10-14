@@ -6,6 +6,9 @@
 *.test
 *.out
 
+# Claude Code / agent worktrees and local settings
+/.claude/
+
 # Local runtime data
 /data/
 *.db
@@ -13,6 +16,10 @@
 *.db-shm
 bosun.yaml
 cli-token
+cli-server.json
+master.key
+.env
+*.local.yaml
 !deploy/docker/bosun.yaml
 
 # Release artifacts (goreleaser)

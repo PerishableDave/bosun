@@ -1,39 +1,103 @@
 # Bosun
 
-An open-source personal agent that gets real work done, but only through
-integrations you've explicitly granted, so it can never do more than you allowed.
+[![CI](https://github.com/perishabledave/bosun/actions/workflows/ci.yml/badge.svg)](https://github.com/perishabledave/bosun/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-See [GOALS.md](GOALS.md) for the why and [ARCHITECTURE.md](ARCHITECTURE.md) for
-the how. The HTTP API is documented in [docs/API.md](docs/API.md).
+Bosun is an open-source personal agent that gets real work done, but only
+through integrations you've explicitly granted, so it can never do more than
+you allowed. It reads and drafts your mail, manages your calendar, keeps notes,
+searches the web and runs routines on a schedule, all through a small set of
+scoped tools. Every tool has a capability you can allow, deny or require
+approval for, every action lands in an audit log, and everything runs on your
+own machine or home server with the model of your choice, including fully
+local models via Ollama.
 
-## Status
+> **Status: early, pre-1.0.** Expect breaking changes (config, API, storage)
+> before 1.0; [CHANGELOG.md](CHANGELOG.md) calls them out. Tested on macOS and
+> Linux (amd64 and arm64).
 
-MVP: the daemon runs a tool-using agent loop over the HTTP API, with per-user
-policy, approvals, an audit log, hooks, and an encrypted credential vault.
-Built-in integrations so far are `websearch` (`websearch.fetch` for public web
-pages; `websearch.search` needs a SearXNG instance) and `notes` (Markdown
-files, off by default), plus per-user memory, the MCP bridge (third-party
-tools from external MCP servers), routines (scheduled and event-driven runs),
-and the web UI, plus `email` (IMAP/SMTP) and `calendar` (CalDAV: iCloud,
-Fastmail, Google, Nextcloud, ...; read-only ICS feeds for Google Calendar,
-Outlook.com and others), which `bosun setup` enables and links with app
-passwords via `bosun connect email`.
+## Features
+
+- **Permissions you can read.** Every tool maps to a capability
+  (`email.read`, `email.send`, `calendar.write`, ...) with a risk level.
+  Reads are allowed by default; writes and irreversible actions ask first.
+  Change any of it per capability: `allow`, `ask` or `deny`.
+- **Approvals anywhere:** inline in `bosun chat`, in the web UI, or with
+  Approve/Deny buttons on Telegram.
+- **Mail and calendars over open protocols:** IMAP/SMTP and CalDAV (Gmail,
+  iCloud, Fastmail, Outlook.com, Yahoo, Nextcloud, self-hosted), read-only ICS
+  feeds, and optional Google/Microsoft OAuth. App-password wizards test the
+  login before saving it.
+- **Notes, web search and fetch,** and any [MCP](https://modelcontextprotocol.io)
+  server's tools, each under the same policy and approval gate.
+- **Any model:** Anthropic, any OpenAI-compatible API, or local models through
+  Ollama. Switching is a config change.
+- **Memory** you can list, edit and delete; **routines** that run prompts on a
+  schedule or when mail arrives; **hooks** around every model and tool call.
+- **Local-first and private:** one SQLite database, an encrypted credential
+  vault (master key in the OS keychain where available), an audit log of every
+  action and model request, no telemetry.
+- **Household-ready:** separate users with their own accounts, memory,
+  permissions and routines; invite codes; LAN mode with certificate pinning, or
+  Tailscale/Caddy in front.
+- **Easy to run:** two static binaries, `bosun setup`, `bosun service install`,
+  `bosun doctor`, backups and restores; or a Docker Compose stack.
+
+## Install
+
+**On your own computer** (macOS or Linux), with Homebrew or the install script,
+which verifies the download's checksum:
+
+```sh
+brew install perishabledave/tap/bosun
+# or
+curl -fsSL https://raw.githubusercontent.com/perishabledave/bosun/main/install.sh | sh
+# add `-s -- --user` to install into ~/.local/bin without sudo
+```
+
+Binaries are also on the [releases page](https://github.com/perishabledave/bosun/releases).
+
+**On a homelab server** for a household: the multi-arch Docker image
+`ghcr.io/perishabledave/bosun` and a Compose file with optional Ollama,
+SearXNG and Caddy in [deploy/docker](deploy/docker).
+
+**[docs/DEPLOY.md](docs/DEPLOY.md)** walks through both end to end: running
+as a background service, where files live, upgrades, backups, exposing Bosun
+safely via Tailscale or a reverse proxy, resource needs, and a security
+checklist. The [Quick start](#quick-start) below is the short version.
+
+## How it compares
+
+Many personal agents get their power from broad access to the machine they run
+on: a shell, the file system, a browser they drive. Bosun takes the opposite
+trade. It has no shell, no general file access and no browser automation; it
+can act only through integrations that declare their capabilities up front,
+and each capability is allowed, denied or gated by your approval. That makes it
+less able to improvise, and much easier to reason about what it can do to you.
+Integrations run in-process but are kept apart by tests: they cannot reach the
+database, the vault or each other, and every tool call goes through one
+dispatcher that checks policy and writes the audit log. Content from mail, web
+pages and other people's calendar invites is treated as untrusted data, never
+as instructions. Bosun is local-first (your data, keys and logs stay on your
+hardware, with fully local operation via Ollama) and prefers open protocols
+(IMAP, SMTP, CalDAV, ICS, MCP) over provider-specific APIs, so it works with
+whatever mail and calendar you already use.
+
+## Documentation
+
+- [GOALS.md](GOALS.md): what Bosun is for, its principles, and non-goals
+- [ARCHITECTURE.md](ARCHITECTURE.md): how it works, including the security model
+- [docs/DEPLOY.md](docs/DEPLOY.md): installing and running it, personal or homelab
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md): integration roadmap
+- [docs/API.md](docs/API.md): the HTTP API
+- [SECURITY.md](SECURITY.md): reporting vulnerabilities, scope, threat model
+- [CONTRIBUTING.md](CONTRIBUTING.md): development setup and project rules
+- [CHANGELOG.md](CHANGELOG.md)
 
 ## Quick start
 
-Install the two binaries, `bosund` (the daemon) and `bosun` (the CLI), with
-Homebrew (`brew install perishabledave/tap/bosun`) or the install script
-(`curl -fsSL https://github.com/perishabledave/bosun/releases/latest/download/install.sh | sh`,
-add `-s -- --user` to install into `~/.local/bin` without sudo; it verifies
-the download's checksum), then run `bosun setup`. For a household server
-there is a Docker image (`ghcr.io/perishabledave/bosun`, amd64/arm64) and a
-Compose file with optional Ollama, SearXNG and Caddy in
-[deploy/docker](deploy/docker). **[docs/DEPLOY.md](docs/DEPLOY.md)** walks
-through both setups end to end: running as a background service, where files
-live, upgrades, backups, exposing Bosun safely via Tailscale or a reverse
-proxy, resource needs, and a security checklist.
-
-To build from source instead (Go 1.26+):
+After installing, `bosun setup` creates your config, data directory and admin
+user. To build from source instead (Go 1.26+):
 
 ```sh
 make build                    # builds bin/bosund and bin/bosun
@@ -52,8 +116,8 @@ elsewhere.
 
 Pick a model in `bosun.yaml`. The default is `anthropic/claude-sonnet-5-5`;
 for a local model, set `llm.default: ollama/<model>` (Ollama at
-`http://localhost:11434`). An `openai` provider (any OpenAI-compatible
-endpoint, `base_url` + `api_key_env`) is also supported.
+`http://localhost:11434`, no key needed). An `openai` provider (any
+OpenAI-compatible endpoint; set `base_url`) is also supported.
 
 ```sh
 ./bin/bosun service install   # run bosund in the background at login (or run ./bin/bosund in a terminal)
@@ -69,26 +133,37 @@ Then:
 ./bin/bosun chat "hello"                   # one turn; `bosun chat` alone opens a session
 ```
 
-**LLM API keys.** Each provider's key is looked up per request, in order: the
-shared vault credential `llm/<provider>` (`bosun credentials set llm
-<provider>`, admin only, encrypted like every other credential), then the
-environment variable named by the provider's `api_key_env` (the default config
-uses `ANTHROPIC_API_KEY`), else none. A key stored or rotated in the vault takes
-effect within 30 seconds, without a restart. The environment variable remains
-an alternative (`export ANTHROPIC_API_KEY=...` before starting `bosund`, or a
-line in `<data_dir>/env` for a service); `bosun doctor` shows where each
-provider's key comes from.
+**LLM API keys.** Store each provider's key in the vault with `bosun
+credentials set llm <provider> --shared` (admin only, encrypted like every
+other credential). A key stored or rotated there takes effect within 30
+seconds, without a restart. As a fallback, a provider's `api_key_env` names an
+environment variable to read when the vault has no key (the default config
+uses `ANTHROPIC_API_KEY`; set it before starting `bosund`, or in
+`<data_dir>/env` for a service). `bosun doctor` shows where each provider's
+key comes from.
 
-### Web UI
+### Commands
 
-`bosund` also serves a small browser UI at its listen address (by default
-<http://127.0.0.1:7777/>): sign in with your Bosun username and password, chat
-with streamed replies and tool calls, approve or deny pending approvals (also
-those raised by routines in other conversations), set allow/ask/deny per tool and see your linked accounts (connecting them is done with `bosun connect`),
-and browse, add, edit and delete your memories. It is plain HTML/JS embedded in
-the binary (no build step, nothing loaded from the network) and follows your
-light/dark setting. The token lives in `sessionStorage`, so closing the tab
-signs you out. Set `daemon.web_ui: false` in `bosun.yaml` to serve the API only.
+| Command | What it does |
+| --- | --- |
+| `bosun setup` | create `bosun.yaml`, the data directory and the first admin |
+| `bosun service install\|status\|logs\|restart\|stop\|start\|uninstall` | run `bosund` in the background ([details](#running-as-a-service)) |
+| `bosun login` / `bosun status` | log in; check that the daemon is running |
+| `bosun chat [message]` | talk to your assistant (interactive, or one message) |
+| `bosun tools`, `bosun policy` | what the assistant can do; your allow/ask/deny rules |
+| `bosun approvals` | list and answer pending approvals |
+| `bosun connect email\|calendar\|google\|microsoft` | link accounts |
+| `bosun credentials` | manage secrets in the encrypted vault |
+| `bosun memory`, `bosun routines` | what it remembers; scheduled and event-driven prompts |
+| `bosun channels`, `bosun mcp`, `bosun hooks` | Telegram links; MCP server status; registered hooks |
+| `bosun users`, `bosun accept-invite`, `bosun passwd` | household users and passwords |
+| `bosun doctor`, `bosun version`, `bosun config check` | health checks and versions |
+| `bosun backup`, `bosun restore` | back up and restore config, database and keys |
+| `bosun completion bash\|zsh\|fish` | shell completion |
+
+Every command has `--help`.
+
+## Using Bosun
 
 ### Permissions
 
@@ -104,52 +179,55 @@ write: ask, destructive: ask). "ask" pauses the tool call until you answer;
 ./bin/bosun policy unset websearch.fetch      # back to the risk default
 ```
 
-### Memory
+### Web UI
 
-After each turn a cheap model pass proposes things worth remembering about you
-(facts, preferences, and anything you ask it to "remember that …"); relevant
-memories are added to the system prompt of later turns. Memories are private to
-each user and fully editable:
+`bosund` also serves a small browser UI at its listen address (by default
+<http://127.0.0.1:7777/>): sign in with your Bosun username and password, chat
+with streamed replies and tool calls, approve or deny pending approvals (also
+those raised by routines in other conversations), set allow/ask/deny per tool and see your linked accounts (connecting them is done with `bosun connect`),
+and browse, add, edit and delete your memories. It is plain HTML/JS embedded in
+the binary (no build step, nothing loaded from the network) and follows your
+light/dark setting. The token lives in `sessionStorage`, so closing the tab
+signs you out. Set `daemon.web_ui: false` in `bosun.yaml` to serve the API only.
+
+### Credentials
+
+Integration secrets (API keys, tokens) live in the daemon's encrypted vault.
+Credentials are per user, except for shared integrations (`mcp`, `websearch`:
+one household-wide backend), which use a single shared credential that only an
+admin can set.
 
 ```sh
-./bin/bosun memory list                       # newest first; --kind note, --search "dentist"
-./bin/bosun memory add preference "Prefers metric units."
-./bin/bosun memory edit 7 "Boat is called Wave Runner."
-./bin/bosun memory forget 7
+pass show github-token | ./bin/bosun credentials set mcp bearer:github   # secret from stdin
+./bin/bosun credentials set mcp bearer:notion                             # hidden prompt
+./bin/bosun credentials list                    # metadata only, never secrets
+./bin/bosun credentials remove mcp bearer:notion
 ```
 
-Configure it under `memory:` in `bosun.yaml` (all optional):
-`enabled: true`, `extract_model: ""` (empty = `llm.default`; a small, cheap
-model is a good choice), `recall_limit: 8`.
+The secret is read from stdin or a hidden prompt, never from a flag, so it
+does not end up in shell history or the process table. For shared
+integrations `--shared` is implied (and said so); `--shared` on a per-user
+integration is an error. `--field key=value` adds non-secret extra values and
+`--expires` an RFC 3339 expiry. The kinds an integration accepts are the ones it
+declares; for MCP, the `credential:` value of a server (`bearer` or
+`bearer:<suffix>`); for `llm`, a configured provider name (`anthropic`,
+`openai`, ...). Every change is audited without the secret.
 
-### Notes
+**Master key.** Credentials are encrypted (AES-256-GCM) under a master key
+chosen by `daemon.master_key` in `bosun.yaml`:
 
-The `notes` integration lets the assistant list, search, read, write, append
-to, and delete Markdown/text notes (`.md`, `.markdown`, `.txt`) in a folder.
-`bosun setup` leaves it off; enable it in `bosun.yaml` and restart `bosund`:
+- `auto` (default): the OS keychain if available (macOS Keychain via
+  `security`; on Linux the Secret Service via `secret-tool`), else
+  `<data_dir>/master.key` (mode 0600).
+- `keychain`: the OS keychain, or fail to start.
+- `file`: `<data_dir>/master.key` only.
 
-```yaml
-integrations:
-  notes:
-    enabled: true
-    dir: ~/Notes        # default: <data_dir>/integrations/notes
-    per_user: true      # default: each user's notes live in ~/Notes/u<user id>/
-```
-
-- Capabilities: `notes.read` (list/search/read; read risk), `notes.write`
-  (write/append; write risk, asks by default), `notes.delete` (destructive).
-- With `per_user: true` users never see each other's notes. Folders are keyed
-  by numeric user ID (`u1`, `u2`, ...), not username, so a new account that
-  reuses a deleted user's name cannot inherit their notes. A pre-existing
-  `<dir>/<username>/` folder is renamed to `<dir>/u<id>/` the first time that
-  user's notes are used (logged). Removing a user never deletes their notes on
-  disk; the folder stays as an orphan you can archive or delete by hand. With
-  `per_user: false` everyone shares `dir`, and note contents are treated as
-  untrusted data (another household member could have written instructions
-  into a note).
-- Paths are relative to the notes folder. Absolute paths, `..`, hidden
-  files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
-  point outside the folder are refused. Reads return at most 200 KB.
+`bosund` logs which one it uses at startup. When the keychain is used and a
+`master.key` file already exists, its key is imported into the keychain and
+the file is **left in place** (with a log notice): delete it yourself once the
+daemon has started with the keychain, since anyone who can read it can decrypt
+the vault (`bosun doctor` warns while it is there). Do not switch to `file` after a key was generated in the keychain:
+the file would hold a different key.
 
 ### Email
 
@@ -176,7 +254,7 @@ everyone else runs it after `bosun login`):
 ```
 
 ```
-Email address: dave@icloud.com
+Email address: you@icloud.com
 Provider: iCloud Mail (IMAP imap.mail.me.com:993, SMTP smtp.mail.me.com:587 STARTTLS)
 
 iCloud Mail needs an app password (your normal password will not work). To create one:
@@ -184,10 +262,10 @@ iCloud Mail needs an app password (your normal password will not work). To creat
   2. Go to Sign-In and Security → App-Specific Passwords and click + (Generate).
   3. Name it "Bosun" and copy the password (format xxxx-xxxx-xxxx-xxxx).
 
-App password for dave@icloud.com:            ← hidden
+App password for you@icloud.com:            ← hidden
 Testing the connection (IMAP login and SMTP authentication)...
 Connection OK.
-Saved. Bosun can now read and send mail as dave@icloud.com (by default, sending asks you first).
+Saved. Bosun can now read and send mail as you@icloud.com (by default, sending asks you first).
 
 iCloud Calendar works with the same app password. Set up your calendar too? [Y/n]:
 Testing CalDAV at https://caldav.icloud.com...
@@ -225,7 +303,7 @@ through the private iCal link unless you set up OAuth.
 For scripts (no questions; the password comes from stdin):
 
 ```sh
-pass show fastmail-bosun | ./bin/bosun connect email --user me@fastmail.com --password-stdin
+pass show fastmail-bosun | ./bin/bosun connect email --user you@fastmail.com --password-stdin
 ./bin/bosun connect email --user me@example.org --password-stdin \
     --host imap.example.org --smtp-host smtp.example.org --smtp-port 587 < pw.txt
 ```
@@ -239,7 +317,7 @@ The wizard stores a `password` credential, which you can also write directly:
 
 ```sh
 ./bin/bosun credentials set email password \
-    --field host=imap.fastmail.com --field user=me@fastmail.com
+    --field host=imap.fastmail.com --field user=you@fastmail.com
 # prompts for the secret: the app password
 ```
 
@@ -349,54 +427,34 @@ cached per user for five minutes; their calendars are read-only, so
   RDATE, EXDATE and moved/cancelled instances. Rarer rules (hourly, BYHOUR,
   BYWEEKNO, BYYEARDAY) show only the first occurrence, flagged.
 
-### Hooks
+### Notes
 
-Hooks run at fixed points of every request: `pre_model_call` (before each
-model request; may rewrite the system prompt and messages), `pre_tool_call`
-(may rewrite arguments or cancel), `post_tool_call` (may rewrite the result)
-and `on_approval` (notification after an approval is answered, expires, or is
-canceled). `bosun hooks list` (admin) shows what is registered.
-
-One built-in hook is on by default: `builtin.redact_secrets` masks strings
-that look like API keys or tokens (`sk-ant-…`, `ghp_…`, `xoxb-…`, `AKIA…`,
-JWTs, runs of 32+ hex digits) in what is sent to the model. The stored
-conversation keeps the original. Turn it off with `hooks.redact_secrets: false`.
-
-**Script hooks** run an executable you provide. They are the one place Bosun
-runs an external program on your behalf, so they are off by default and only
-configurable in `bosun.yaml` (no API), and `bosund` logs each one at WARN
-level on startup:
+The `notes` integration lets the assistant list, search, read, write, append
+to, and delete Markdown/text notes (`.md`, `.markdown`, `.txt`) in a folder.
+`bosun setup` leaves it off; enable it in `bosun.yaml` and restart `bosund`:
 
 ```yaml
-hooks:
-  script_hooks:
-    enabled: false                 # must be true for any script to run
-    scripts:
-      - point: pre_tool_call       # pre_tool_call | post_tool_call | pre_model_call | on_approval
-        command: ["/usr/local/bin/bosun-guard", "--strict"]   # absolute path; no shell
-        timeout: 5s                # default 5s, max 60s
-        match: "email.*"           # optional glob on tool or capability (tool points only)
-        name: guard                # optional; default script-<n>-<command>
+integrations:
+  notes:
+    enabled: true
+    dir: ~/Notes        # default: <data_dir>/integrations/notes
+    per_user: true      # default: each user's notes live in ~/Notes/u<user id>/
 ```
 
-The script gets one JSON object on stdin (`point`, `user_id`, `tool`,
-`integration`, `capability`, `risk`, `tool_call_id`, `args`; plus `result`
-`{content, untrusted}` for post_tool_call, `model`/`system`/`messages` for
-pre_model_call, `approval`/`decision` for on_approval) and must print one JSON
-object on stdout:
-
-| Point | Output |
-|---|---|
-| `pre_tool_call` | `{"action": "continue" \| "cancel", "args": {...}, "reason": "..."}` (`args` optional; rewritten args are validated and checked by policy) |
-| `post_tool_call` | `{"result": "replacement content"}` or `{}` |
-| `pre_model_call` | `{"system": "...", "messages": [...]}`, both optional, or `{}` |
-| `on_approval` | ignored |
-
-A non-zero exit, a timeout, or invalid JSON **fails closed**: the tool call is
-not run, its result is withheld, or the turn fails; on_approval failures are
-only logged. Every failure is recorded in the audit log (`kind = hook`).
-Scripts get only `PATH` and `HOME` in their environment (no API keys), run in
-bosund's working directory, and run with bosund's privileges.
+- Capabilities: `notes.read` (list/search/read; read risk), `notes.write`
+  (write/append; write risk, asks by default), `notes.delete` (destructive).
+- With `per_user: true` users never see each other's notes. Folders are keyed
+  by numeric user ID (`u1`, `u2`, ...), not username, so a new account that
+  reuses a deleted user's name cannot inherit their notes. A pre-existing
+  `<dir>/<username>/` folder is renamed to `<dir>/u<id>/` the first time that
+  user's notes are used (logged). Removing a user never deletes their notes on
+  disk; the folder stays as an orphan you can archive or delete by hand. With
+  `per_user: false` everyone shares `dir`, and note contents are treated as
+  untrusted data (another household member could have written instructions
+  into a note).
+- Paths are relative to the notes folder. Absolute paths, `..`, hidden
+  files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
+  point outside the folder are refused. Reads return at most 200 KB.
 
 ### MCP servers
 
@@ -465,6 +523,24 @@ routines:
     model: anthropic/claude-haiku-5-5   # optional override
 ```
 
+### Memory
+
+After each turn a cheap model pass proposes things worth remembering about you
+(facts, preferences, and anything you ask it to "remember that …"); relevant
+memories are added to the system prompt of later turns. Memories are private to
+each user and fully editable:
+
+```sh
+./bin/bosun memory list                       # newest first; --kind note, --search "dentist"
+./bin/bosun memory add preference "Prefers metric units."
+./bin/bosun memory edit 7 "Boat is called Wave Runner."
+./bin/bosun memory forget 7
+```
+
+Configure it under `memory:` in `bosun.yaml` (all optional):
+`enabled: true`, `extract_model: ""` (empty = `llm.default`; a small, cheap
+model is a good choice), `recall_limit: 8`.
+
 ### Text your assistant on Telegram
 
 `bosund` can run a Telegram bot so you can chat with your assistant, answer
@@ -527,44 +603,54 @@ Safety and privacy:
   assistant's replies and approval details pass through Telegram's servers.
   The daemon logs chat IDs, never message text.
 
-### Credentials
+### Hooks
 
-Integration secrets (API keys, tokens) live in the daemon's encrypted vault.
-Credentials are per user, except for shared integrations (`mcp`, `websearch`:
-one household-wide backend), which use a single shared credential that only an
-admin can set.
+Hooks run at fixed points of every request: `pre_model_call` (before each
+model request; may rewrite the system prompt and messages), `pre_tool_call`
+(may rewrite arguments or cancel), `post_tool_call` (may rewrite the result)
+and `on_approval` (notification after an approval is answered, expires, or is
+canceled). `bosun hooks list` (admin) shows what is registered.
 
-```sh
-pass show github-token | ./bin/bosun credentials set mcp bearer:github   # secret from stdin
-./bin/bosun credentials set mcp bearer:notion                             # hidden prompt
-./bin/bosun credentials list                    # metadata only, never secrets
-./bin/bosun credentials remove mcp bearer:notion
+One built-in hook is on by default: `builtin.redact_secrets` masks strings
+that look like API keys or tokens (`sk-ant-…`, `ghp_…`, `xoxb-…`, `AKIA…`,
+JWTs, runs of 32+ hex digits) in what is sent to the model. The stored
+conversation keeps the original. Turn it off with `hooks.redact_secrets: false`.
+
+**Script hooks** run an executable you provide. They are the one place Bosun
+runs an external program on your behalf, so they are off by default and only
+configurable in `bosun.yaml` (no API), and `bosund` logs each one at WARN
+level on startup:
+
+```yaml
+hooks:
+  script_hooks:
+    enabled: false                 # must be true for any script to run
+    scripts:
+      - point: pre_tool_call       # pre_tool_call | post_tool_call | pre_model_call | on_approval
+        command: ["/usr/local/bin/bosun-guard", "--strict"]   # absolute path; no shell
+        timeout: 5s                # default 5s, max 60s
+        match: "email.*"           # optional glob on tool or capability (tool points only)
+        name: guard                # optional; default script-<n>-<command>
 ```
 
-The secret is read from stdin or a hidden prompt, never from a flag, so it
-does not end up in shell history or the process table. For shared
-integrations `--shared` is implied (and said so); `--shared` on a per-user
-integration is an error. `--field key=value` adds non-secret extra values and
-`--expires` an RFC 3339 expiry. The kinds an integration accepts are the ones it
-declares; for MCP, the `credential:` value of a server (`bearer` or
-`bearer:<suffix>`); for `llm`, a configured provider name (`anthropic`,
-`openai`, ...). Every change is audited without the secret.
+The script gets one JSON object on stdin (`point`, `user_id`, `tool`,
+`integration`, `capability`, `risk`, `tool_call_id`, `args`; plus `result`
+`{content, untrusted}` for post_tool_call, `model`/`system`/`messages` for
+pre_model_call, `approval`/`decision` for on_approval) and must print one JSON
+object on stdout:
 
-**Master key.** Credentials are encrypted (AES-256-GCM) under a master key
-chosen by `daemon.master_key` in `bosun.yaml`:
+| Point | Output |
+|---|---|
+| `pre_tool_call` | `{"action": "continue" \| "cancel", "args": {...}, "reason": "..."}` (`args` optional; rewritten args are validated and checked by policy) |
+| `post_tool_call` | `{"result": "replacement content"}` or `{}` |
+| `pre_model_call` | `{"system": "...", "messages": [...]}`, both optional, or `{}` |
+| `on_approval` | ignored |
 
-- `auto` (default): the OS keychain if available (macOS Keychain via
-  `security`; on Linux the Secret Service via `secret-tool`), else
-  `<data_dir>/master.key` (mode 0600).
-- `keychain`: the OS keychain, or fail to start.
-- `file`: `<data_dir>/master.key` only.
-
-`bosund` logs which one it uses at startup. When the keychain is used and a
-`master.key` file already exists, its key is imported into the keychain and
-the file is **left in place** (with a log notice): delete it yourself once the
-daemon has started with the keychain, since anyone who can read it can decrypt
-the vault. Do not switch to `file` after a key was generated in the keychain:
-the file would hold a different key.
+A non-zero exit, a timeout, or invalid JSON **fails closed**: the tool call is
+not run, its result is withheld, or the turn fails; on_approval failures are
+only logged. Every failure is recorded in the audit log (`kind = hook`).
+Scripts get only `PATH` and `HOME` in their environment (no API keys), run in
+bosund's working directory, and run with bosund's privileges.
 
 ### Connect your Google account
 
@@ -652,6 +738,52 @@ for LAN use also add `https://<host>:<port>/oauth/callback`), and enable
 *Allow public client flows*. No secret is needed. Bundles: `email`
 (`Mail.ReadWrite`, `Mail.Send`), `calendar` (`Calendars.ReadWrite`), `tasks`
 (`Tasks.ReadWrite`), `drive` (`Files.Read`), all on Microsoft Graph.
+
+### Audit log
+
+Every tool call (with its policy decision and outcome), approval, policy
+change, and model request (provider, model, token counts) is appended to the
+`audit_log` table in `<data_dir>/bosun.db` (SQLite). Message content and tool
+arguments are redacted there unless `audit.log_content: true`.
+
+```sh
+sqlite3 ~/.bosun/bosun.db "select ts, kind, tool, decision, error from audit_log order by id desc limit 20"
+```
+
+## Running Bosun
+
+See also [docs/DEPLOY.md](docs/DEPLOY.md) for complete walkthroughs.
+
+### Running as a service
+
+`bosun service` keeps `bosund` running in the background and starts it at login:
+
+```sh
+bosun service install    # macOS: ~/Library/LaunchAgents/com.github.perishabledave.bosun.plist (launchd user agent)
+                         # Linux: ~/.config/systemd/user/bosund.service (systemd --user)
+bosun service status     # running/pid, plus the daemon's health and version
+bosun service logs       # follows <data_dir>/logs/bosund.log (macOS) or journalctl --user -u bosund
+bosun service restart    # e.g. after editing bosun.yaml
+bosun service stop | start | uninstall
+```
+
+`install` finds `bosund` next to `bosun` (or on `$PATH`; `--bosund` overrides)
+and runs it with the absolute `--config` path. On macOS the agent has
+`RunAtLoad` and `KeepAlive`, and logs to `<data_dir>/logs/bosund.log`. On
+Linux the user unit uses `Restart=on-failure`; run `sudo loginctl
+enable-linger $USER` once so it keeps running after you log out and starts at
+boot. `--system` writes `/etc/systemd/system/bosund.service` running as a
+dedicated `bosun` user instead (run it with sudo; `bosun` prints the
+`useradd` command and never runs sudo itself); `--print` shows the unit
+without installing it.
+
+**Secrets never go in unit files.** `bosund` reads `<data_dir>/env` at
+startup: optional `KEY=VALUE` lines (blank lines and `#` comments allowed)
+added to its environment, without overriding variables already set. The file
+must be mode 0600 and owned by the user running `bosund`, or the daemon
+refuses to start. Prefer the vault for LLM keys (`bosun credentials set llm
+anthropic`); use `env` for the rest (`api_key_env`, `client_secret_env`, a
+Telegram `token_env`).
 
 ### Household users
 
@@ -760,37 +892,6 @@ Server-Sent Events (chat streaming) need the proxy not to buffer responses;
 both of these stream by default. See [docs/DEPLOY.md](docs/DEPLOY.md) for
 packaged installs.
 
-### Running as a service
-
-`bosun service` keeps `bosund` running in the background and starts it at login:
-
-```sh
-bosun service install    # macOS: ~/Library/LaunchAgents/dev.bosun.bosund.plist (launchd user agent)
-                         # Linux: ~/.config/systemd/user/bosund.service (systemd --user)
-bosun service status     # running/pid, plus the daemon's health and version
-bosun service logs       # follows <data_dir>/logs/bosund.log (macOS) or journalctl --user -u bosund
-bosun service restart    # e.g. after editing bosun.yaml
-bosun service stop | start | uninstall
-```
-
-`install` finds `bosund` next to `bosun` (or on `$PATH`; `--bosund` overrides)
-and runs it with the absolute `--config` path. On macOS the agent has
-`RunAtLoad` and `KeepAlive`, and logs to `<data_dir>/logs/bosund.log`. On
-Linux the user unit uses `Restart=on-failure`; run `sudo loginctl
-enable-linger $USER` once so it keeps running after you log out and starts at
-boot. `--system` writes `/etc/systemd/system/bosund.service` running as a
-dedicated `bosun` user instead (run it with sudo; `bosun` prints the
-`useradd` command and never runs sudo itself); `--print` shows the unit
-without installing it.
-
-**Secrets never go in unit files.** `bosund` reads `<data_dir>/env` at
-startup: optional `KEY=VALUE` lines (blank lines and `#` comments allowed)
-added to its environment, without overriding variables already set. The file
-must be mode 0600 and owned by the user running `bosund`, or the daemon
-refuses to start. Prefer the vault for LLM keys (`bosun credentials set llm
-anthropic`); use `env` for the rest (`api_key_env`, `client_secret_env`, a
-Telegram `token_env`).
-
 ### Health checks, backups and versions
 
 ```sh
@@ -829,34 +930,28 @@ daemon answers, and refuses a non-empty data dir or an existing config unless
 deleting them. `--data-dir` restores somewhere else and rewrites the config to
 match. Log in again afterwards.
 
-### Audit log
-
-Every tool call (with its policy decision and outcome), approval, policy
-change, and model request (provider, model, token counts) is appended to the
-`audit_log` table in `<data_dir>/bosun.db` (SQLite). Message content and tool
-arguments are redacted there unless `audit.log_content: true`.
-
-```sh
-sqlite3 ~/.bosun/bosun.db "select ts, kind, tool, decision, error from audit_log order by id desc limit 20"
-```
-
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the rules the tests
+enforce.
+
 ```sh
-make test   # go test ./...
-make vet    # go vet ./...
-make lint   # gofmt + vet + integration import guard
+make build              # bin/bosund and bin/bosun
+make test               # go test ./...
+make lint               # gofmt, go vet, integration import guard, dispatcher choke-point test
+make check              # lint + go test -race (what CI runs)
 make docker             # build the container image from source (bosun:dev)
 make release-snapshot   # all release archives, checksums, formula and images into dist/, nothing published
 ```
 
 Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` runs
-GoReleaser (`.goreleaser.yaml`).
+the tests, then GoReleaser (`.goreleaser.yaml`).
 
 Dependencies are kept minimal: `modernc.org/sqlite` (pure Go, no cgo),
 `gopkg.in/yaml.v3`, `golang.org/x/crypto` (argon2id), `golang.org/x/term`
-(password prompts), and `github.com/spf13/cobra` for the CLI.
+(password prompts), and `github.com/spf13/cobra` for the CLI. Their licenses
+are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+MIT; see [LICENSE](LICENSE). Security reports: [SECURITY.md](SECURITY.md).

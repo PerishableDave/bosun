@@ -442,6 +442,8 @@ func SelectKeySource(ctx context.Context, o KeySourceOptions) (KeySource, string
 		}
 	}
 	if _, err := os.Stat(file.Path); err == nil {
+		// Deliberately not deleted automatically (a failed keychain would
+		// otherwise lose the only copy). `bosun doctor` warns about it.
 		// TODO: `bosun setup` should offer to delete the imported key file
 		// once the keychain copy is confirmed.
 		log.Info("master key file is still present; the keychain copy is in use", "file", file.Path)

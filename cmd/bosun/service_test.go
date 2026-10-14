@@ -39,7 +39,7 @@ func (f *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte
 
 func testSpec(dir string) serviceSpec {
 	data := filepath.Join(dir, "data dir")
-	return serviceSpec{Label: "dev.bosun.test", Bosund: "/opt/bosun/bin/bosund", Config: filepath.Join(dir, "bosun.yaml"),
+	return serviceSpec{Label: "com.github.perishabledave.bosun-test", Bosund: "/opt/bosun/bin/bosund", Config: filepath.Join(dir, "bosun.yaml"),
 		DataDir: data, LogFile: filepath.Join(data, "logs", "bosund.log")}
 }
 
@@ -53,14 +53,14 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if err := c.install(ctx); err != nil {
 		t.Fatal(err)
 	}
-	plistPath := filepath.Join(dir, "home", "Library", "LaunchAgents", "dev.bosun.test.plist")
+	plistPath := filepath.Join(dir, "home", "Library", "LaunchAgents", "com.github.perishabledave.bosun-test.plist")
 	b, err := os.ReadFile(plistPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	plist := string(b)
 	for _, want := range []string{
-		"<key>Label</key>\n\t<string>dev.bosun.test</string>",
+		"<key>Label</key>\n\t<string>com.github.perishabledave.bosun-test</string>",
 		"<string>/opt/bosun/bin/bosund</string>\n\t\t<string>--config</string>\n\t\t<string>" + filepath.Join(dir, "bosun.yaml") + "</string>",
 		"<key>RunAtLoad</key>\n\t<true/>",
 		"<key>KeepAlive</key>",
@@ -80,7 +80,7 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(dir, "data dir", "logs")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("log dir: %v %v", fi, err)
 	}
-	if got := strings.Join(fr.calls, "; "); got != "launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 "+plistPath+"; launchctl kickstart gui/501/dev.bosun.test" {
+	if got := strings.Join(fr.calls, "; "); got != "launchctl print gui/501/com.github.perishabledave.bosun-test; launchctl bootstrap gui/501 "+plistPath+"; launchctl kickstart gui/501/com.github.perishabledave.bosun-test" {
 		t.Errorf("install calls = %s", got)
 	}
 
@@ -89,7 +89,7 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if err := c.install(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(fr.calls, "; "), "launchctl bootout gui/501/dev.bosun.test; launchctl print gui/501/dev.bosun.test; launchctl bootstrap") {
+	if !strings.Contains(strings.Join(fr.calls, "; "), "launchctl bootout gui/501/com.github.perishabledave.bosun-test; launchctl print gui/501/com.github.perishabledave.bosun-test; launchctl bootstrap") {
 		t.Errorf("reinstall calls = %v", fr.calls)
 	}
 
@@ -111,9 +111,9 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if err := c.start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	want := "launchctl print gui/501/dev.bosun.test; launchctl kickstart -k gui/501/dev.bosun.test; " +
-		"launchctl print gui/501/dev.bosun.test; launchctl bootout gui/501/dev.bosun.test; launchctl print gui/501/dev.bosun.test; " +
-		"launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 " + plistPath + "; launchctl kickstart gui/501/dev.bosun.test"
+	want := "launchctl print gui/501/com.github.perishabledave.bosun-test; launchctl kickstart -k gui/501/com.github.perishabledave.bosun-test; " +
+		"launchctl print gui/501/com.github.perishabledave.bosun-test; launchctl bootout gui/501/com.github.perishabledave.bosun-test; launchctl print gui/501/com.github.perishabledave.bosun-test; " +
+		"launchctl print gui/501/com.github.perishabledave.bosun-test; launchctl bootstrap gui/501 " + plistPath + "; launchctl kickstart gui/501/com.github.perishabledave.bosun-test"
 	if got := strings.Join(fr.calls, "; "); got != want {
 		t.Errorf("restart/stop/start calls =\n%s\nwant\n%s", got, want)
 	}
@@ -238,14 +238,58 @@ func TestServicePrint(t *testing.T) {
 	if err := os.WriteFile(bosund, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runCLI(t, "", "--config", cfgPath, "service", "install", "--print", "--bosund", bosund, "--label", "dev.bosun.print-test")
+	out, err := runCLI(t, "", "--config", cfgPath, "service", "install", "--print", "--bosund", bosund, "--label", "com.github.perishabledave.bosun-print-test")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, bosund) || !strings.Contains(out, cfgPath) || !strings.Contains(out, "dev.bosun.print-test") {
+	if !strings.Contains(out, bosund) || !strings.Contains(out, cfgPath) || !strings.Contains(out, "com.github.perishabledave.bosun-print-test") {
 		t.Errorf("print output:\n%s", out)
 	}
 	if _, err := runCLI(t, "", "--config", cfgPath, "service", "status", "--label", "bad label"); err == nil {
 		t.Error("bad label accepted")
+	}
+}
+
+func TestLaunchdInstallRemovesLegacyAgent(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	agents := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(agents, legacyLaunchdLabel+".plist")
+	if err := os.WriteFile(legacy, []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := testSpec(dir)
+	spec.Label = DefaultLaunchdLabel
+	fr := &fakeRunner{loaded: true} // the legacy agent is running
+	var out bytes.Buffer
+	c := &serviceCtl{goos: "darwin", home: home, uid: 501, spec: spec, run: fr.run, out: &out}
+	if err := c.install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy plist still present: %v", err)
+	}
+	calls := strings.Join(fr.calls, "; ")
+	if !strings.HasPrefix(calls, "launchctl print gui/501/dev.bosun.bosund; launchctl bootout gui/501/dev.bosun.bosund; ") ||
+		!strings.Contains(calls, "launchctl bootstrap gui/501 "+filepath.Join(agents, DefaultLaunchdLabel+".plist")) {
+		t.Errorf("calls = %s", calls)
+	}
+	if !strings.Contains(out.String(), "Removed the old agent dev.bosun.bosund") {
+		t.Errorf("output:\n%s", out.String())
+	}
+
+	// A custom label leaves other agents alone.
+	if err := os.WriteFile(legacy, []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.spec.Label = "com.example.other"
+	if err := c.install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Errorf("legacy plist removed for a custom label: %v", err)
 	}
 }

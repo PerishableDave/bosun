@@ -135,6 +135,11 @@ func MasterKey(ctx context.Context, cfg *config.Config, detect func() vault.Keyc
 	case err != nil:
 		return fail(name, "%s: %v", kc.Name(), err)
 	}
+	if _, err := os.Stat(keyFile); err == nil {
+		// bosund imports an existing key file into the keychain but leaves
+		// the file in place; anyone who can read it can decrypt the vault.
+		return warn(name, "%s holds the key, but %s still has a copy: delete it once bosund has started with the keychain", kc.Name(), keyFile)
+	}
 	return ok(name, "%s (service %s, account %s; readable)", kc.Name(), vault.DefaultKeychainService, vault.DefaultKeychainAccount)
 }
 

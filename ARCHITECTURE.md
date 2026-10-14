@@ -83,7 +83,9 @@ internal/
     anthropic/
     openai/          any OpenAI-compatible endpoint
     ollama/
-  integration/       Integration/Tool interfaces, registry, dispatcher
+    providers/       builds the registry from bosun.yaml; per-request API key lookup
+  integration/       Integration/Tool interfaces, registry
+  dispatch/          the dispatcher: the single path from the model to a tool
   integrations/      first-party integrations (one package each)
     calendar/
     email/
@@ -106,7 +108,8 @@ internal/
   doctor/            health checks behind `bosun doctor` and GET /v1/doctor
   store/             SQLite schema, migrations, queries
   audit/             append-only action log
-web/                 web UI source; built output embedded into bosund
+  webui/             web UI (plain HTML/JS, embedded into bosund)
+  oauth/             OAuth2 account linking (bosun connect google|microsoft)
 docs/
 ```
 
@@ -186,10 +189,11 @@ Rules that keep in-process plugins honest:
   registry rejects integrations that violate this at startup.
 - The dispatcher is the **only** path from the model to a `Handler`. Integrations
   never call each other.
-- A `go vet`-style lint (via `golangci-lint` custom rule or `depguard`) forbids
-  `internal/integrations/**` from importing `os/exec`, `internal/store`,
-  `internal/auth`, or other integrations. This is the compile-time substitute
-  for process isolation. The single exception is `os/exec` in
+- An import guard test (`internal/integrations/integrations_test.go`, run by
+  `make lint` and CI) forbids `internal/integrations/**` from importing
+  `os/exec`, `internal/store`, `internal/auth`, `internal/vault`,
+  `internal/dispatch`, or other integrations. This is the compile-time
+  substitute for process isolation. The single exception is `os/exec` in
   `internal/integrations/mcp` (that directory only), because stdio MCP servers
   are subprocesses.
 - Integrations receive credentials through `CredentialSource`, scoped to the
