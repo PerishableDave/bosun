@@ -181,15 +181,11 @@ func (s *Service) LoginWithLabel(ctx context.Context, username, password, label 
 	if !ok || su.Disabled {
 		return nil, ErrInvalidCredentials
 	}
-	token, err := newToken()
+	sess, err := s.newSession(ctx, su.ID, label)
 	if err != nil {
 		return nil, fmt.Errorf("login: %w", err)
 	}
-	expires := s.now().Add(s.ttl)
-	if _, err := s.st.CreateSession(ctx, su.ID, HashToken(token), label, expires); err != nil {
-		return nil, fmt.Errorf("login: %w", err)
-	}
-	return &Session{Token: token, ExpiresAt: expires.UTC(), User: toUser(su)}, nil
+	return sess, nil
 }
 
 // Authenticate resolves a bearer token to its user.

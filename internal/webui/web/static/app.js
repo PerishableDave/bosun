@@ -4,13 +4,16 @@ import { pending, startEvents, renderApprovalsPage } from "./approvals.js";
 import { renderChat } from "./chat.js";
 import { h } from "./dom.js";
 import { renderTools, renderMemory } from "./pages.js";
+import { renderUsers, acceptInviteForm } from "./users.js";
 
 const root = document.getElementById("app");
-const PAGES = [
+// [id, label, render(el, user), adminOnly]
+const ALL_PAGES = [
   ["chat", "Chat"],
   ["tools", "Tools", renderTools],
   ["memory", "Memory", renderMemory],
   ["approvals", "Approvals", renderApprovalsPage],
+  ["users", "Users", renderUsers, true],
 ];
 
 let stopEvents = () => {};
@@ -37,11 +40,21 @@ function showLogin(note) {
   h("label", {}, "Username", user),
   h("label", {}, "Password", pass),
   h("button", { class: "btn primary block", type: "submit" }, "Sign in"),
+  h("a", { href: "#", class: "small", onclick: (e) => { e.preventDefault(); showAcceptInvite(); } }, "Have an invite code?"),
   err);
   root.replaceChildren(h("main", { class: "login-wrap" }, form));
 }
 
+function showAcceptInvite() {
+  const form = acceptInviteForm((res) => {
+    auth.token = res.token;
+    showApp(res.user);
+  }, () => showLogin());
+  root.replaceChildren(h("main", { class: "login-wrap" }, form));
+}
+
 function showApp(user) {
+  const PAGES = ALL_PAGES.filter((p) => !p[3] || user.role === "admin");
   const badge = h("span", { class: "badge", hidden: true }, "0");
   const tabs = PAGES.map(([id, label]) => {
     const a = h("a", { href: "#" + id, class: "tab", "data-page": id }, label);
@@ -73,7 +86,7 @@ function showApp(user) {
     page.hidden = entry[0] === "chat";
     if (entry[0] !== "chat") {
       page.className = "page page-" + entry[0];
-      cleanup = await entry[2](page);
+      cleanup = await entry[2](page, user);
     }
   };
   window.onhashchange = route;

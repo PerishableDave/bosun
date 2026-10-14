@@ -623,6 +623,34 @@ for LAN use also add `https://<host>:<port>/oauth/callback`), and enable
 (`Mail.ReadWrite`, `Mail.Send`), `calendar` (`Calendars.ReadWrite`), `tasks`
 (`Tasks.ReadWrite`), `drive` (`Files.Read`), all on Microsoft Graph.
 
+### Household users
+
+`bosun setup` creates the first admin. The admin adds everyone else; each new
+member gets a one-time invite code (valid 24 hours) and chooses their own
+password, so nobody has to share one:
+
+```sh
+bosun users add alice                 # prints the code and the exact command for alice
+bosun users add bob --role admin      # a second admin
+```
+
+Alice runs the printed command on her own computer (it includes `--server`
+and the certificate pin when the daemon is on the LAN), or opens the web UI
+and picks *Have an invite code?* on the sign-in page:
+
+```sh
+bosun accept-invite bsi_… --server https://myhost:7777 --insecure-fingerprint 3A:7F:…:C2
+```
+
+Each person has their own conversations, memory, credentials, permissions
+and routines. `bosun passwd` changes your own password (your other sessions
+are signed out). Admins manage users with `bosun users list`,
+`disable`/`enable <name>` (signs them out, keeps their data),
+`reset-password <name>` (new invite code), `set-role <name> admin|member`
+and `remove <name>` (deletes the user and all their data; the audit log is
+kept), or on the web UI's **Users** page. The last enabled admin cannot be
+demoted, disabled or removed.
+
 ### Using Bosun from other devices (LAN)
 
 By default `bosund` listens on `127.0.0.1` only. To reach it from your phone or

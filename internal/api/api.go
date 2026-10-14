@@ -79,6 +79,10 @@ type Options struct {
 	// Channels manages chat-app links (usually *channels.Manager) behind
 	// /v1/channels. Nil means no channel is enabled.
 	Channels Channels
+
+	// Users manages household users and invites (usually *auth.Service)
+	// behind /v1/users, /v1/invites and /v1/me/password.
+	Users UserAdmin
 }
 
 // Server holds API dependencies.
@@ -113,6 +117,9 @@ type Server struct {
 	turns   map[string]bool // conversations with a turn in progress
 
 	credTests *rateLimiter // POST /v1/integrations/{name}/test, per user
+
+	users         UserAdmin
+	inviteAccepts *rateLimiter // POST /v1/invites/{code}/accept, per client address
 }
 
 // New returns a Server. Auth and Bus are required.
@@ -128,6 +135,8 @@ func New(o Options) (*Server, error) {
 	s.oauth = o.OAuth
 	s.channels = o.Channels
 	s.credTests = newRateLimiter(CredentialTestsPerMinute, time.Minute)
+	s.users = o.Users
+	s.inviteAccepts = newRateLimiter(InviteAcceptsPerMinute, time.Minute)
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -189,6 +198,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/channels", authed(s.handleListChannels))
 	mux.Handle("POST /v1/channels/{channel}/link", authed(s.handleChannelLinkCode))
 	mux.Handle("DELETE /v1/channels/{channel}/{external_id}", authed(s.handleDeleteChannelLink))
+	mux.Handle("GET /v1/users", authed(s.handleListUsers))
+	mux.Handle("POST /v1/users", authed(s.handleCreateUser))
+	mux.Handle("PUT /v1/users/{id}", authed(s.handleUpdateUser))
+	mux.Handle("DELETE /v1/users/{id}", authed(s.handleDeleteUser))
+	mux.Handle("POST /v1/users/{id}/reset-password", authed(s.handleResetPassword))
+	mux.HandleFunc("POST /v1/invites/{code}/accept", s.handleAcceptInvite) // no auth: the one-time code identifies the user
+	mux.Handle("PUT /v1/me/password", authed(s.handleChangePassword))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)
