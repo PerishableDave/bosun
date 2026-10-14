@@ -24,10 +24,14 @@ import (
 
 // Service defaults.
 const (
-	DefaultLaunchdLabel = "dev.bosun.bosund"
+	DefaultLaunchdLabel = "com.github.perishabledave.bosun"
 	DefaultSystemdUnit  = "bosund"
 	ServiceUser         = "bosun"
 	serviceLogFile      = "bosund.log"
+	// legacyLaunchdLabel is the label pre-release builds used. Installing
+	// under the default label removes an agent left over with this one, so
+	// two copies of bosund never compete for the listen port.
+	legacyLaunchdLabel = "dev.bosun.bosund"
 	// launchdPath is the PATH launchd gives bosund (launchd's own default
 	// is only /usr/bin:/bin:/usr/sbin:/sbin, which misses Homebrew tools
 	// that MCP servers often need). It is not a secret.
@@ -232,6 +236,9 @@ func (c *serviceCtl) install(ctx context.Context) error {
 	fmt.Fprintf(c.out, "Wrote %s (%s)\n", path, c.kind())
 	switch c.goos {
 	case "darwin":
+		if err := c.removeLegacyAgent(ctx); err != nil {
+			return err
+		}
 		if c.loaded(ctx) {
 			if err := c.bootout(ctx); err != nil {
 				return err
@@ -258,6 +265,29 @@ func (c *serviceCtl) install(ctx context.Context) error {
 	}
 	fmt.Fprintln(c.out, "Secrets (API keys, tokens) go in the vault (`bosun credentials set ...`) or in")
 	fmt.Fprintf(c.out, "%s (KEY=VALUE lines, mode 0600), never in the unit file.\n", filepath.Join(c.spec.DataDir, "env"))
+	return nil
+}
+
+// removeLegacyAgent unloads and deletes a launchd agent installed under
+// legacyLaunchdLabel, when installing under the default label.
+func (c *serviceCtl) removeLegacyAgent(ctx context.Context) error {
+	if c.spec.Label != DefaultLaunchdLabel {
+		return nil
+	}
+	old := filepath.Join(c.home, "Library", "LaunchAgents", legacyLaunchdLabel+".plist")
+	if _, err := os.Stat(old); err != nil {
+		return nil
+	}
+	target := c.domain() + "/" + legacyLaunchdLabel
+	if _, err := c.run(ctx, "launchctl", "print", target); err == nil {
+		if _, err := c.run(ctx, "launchctl", "bootout", target); err != nil {
+			return fmt.Errorf("unload the old agent %s: %w", legacyLaunchdLabel, err)
+		}
+	}
+	if err := os.Remove(old); err != nil {
+		return fmt.Errorf("remove the old agent: %w", err)
+	}
+	fmt.Fprintf(c.out, "Removed the old agent %s (%s).\n", legacyLaunchdLabel, old)
 	return nil
 }
 
@@ -579,9 +609,10 @@ func newServiceCmd(g *globals) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
 		Short: "Run bosund as a background service (launchd on macOS, systemd on Linux)",
-		Long: `service installs bosund as a long-running service that starts at login (macOS
-launchd user agent ~/Library/LaunchAgents/dev.bosun.bosund.plist) or as a
-systemd user unit (~/.config/systemd/user/bosund.service; --system writes
+		Long: `service installs bosund as a long-running service that starts at login:
+a macOS launchd user agent
+(~/Library/LaunchAgents/com.github.perishabledave.bosun.plist) or a systemd
+user unit (~/.config/systemd/user/bosund.service; --system writes
 /etc/systemd/system/bosund.service running as a dedicated "bosun" user).
 
 Unit files never contain secrets: bosund loads $data_dir/env (KEY=VALUE

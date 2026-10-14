@@ -765,7 +765,7 @@ packaged installs.
 `bosun service` keeps `bosund` running in the background and starts it at login:
 
 ```sh
-bosun service install    # macOS: ~/Library/LaunchAgents/dev.bosun.bosund.plist (launchd user agent)
+bosun service install    # macOS: ~/Library/LaunchAgents/com.github.perishabledave.bosun.plist (launchd user agent)
                          # Linux: ~/.config/systemd/user/bosund.service (systemd --user)
 bosun service status     # running/pid, plus the daemon's health and version
 bosun service logs       # follows <data_dir>/logs/bosund.log (macOS) or journalctl --user -u bosund
