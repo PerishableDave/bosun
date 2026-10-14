@@ -83,6 +83,11 @@ func TestMasterKey(t *testing.T) {
 		t.Errorf("empty keychain, marked: %+v", c)
 	}
 	kc[vault.DefaultKeychainService+"/"+vault.DefaultKeychainAccount] = base64.StdEncoding.EncodeToString(make([]byte, 32))
+	// The key file from above is still there: a leftover copy is flagged.
+	if c := MasterKey(ctx, cfg, func() vault.Keychain { return kc }); c.Status != Warn || !strings.Contains(c.Detail, "still has a copy") {
+		t.Errorf("keychain with leftover file: %+v", c)
+	}
+	os.Remove(filepath.Join(dir, vault.MasterKeyFile))
 	if c := MasterKey(ctx, cfg, func() vault.Keychain { return kc }); c.Status != OK || !strings.Contains(c.Detail, "test keychain") {
 		t.Errorf("keychain: %+v", c)
 	}

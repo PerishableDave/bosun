@@ -226,7 +226,7 @@ chosen by `daemon.master_key` in `bosun.yaml`:
 `master.key` file already exists, its key is imported into the keychain and
 the file is **left in place** (with a log notice): delete it yourself once the
 daemon has started with the keychain, since anyone who can read it can decrypt
-the vault. Do not switch to `file` after a key was generated in the keychain:
+the vault (`bosun doctor` warns while it is there). Do not switch to `file` after a key was generated in the keychain:
 the file would hold a different key.
 
 ### Email
