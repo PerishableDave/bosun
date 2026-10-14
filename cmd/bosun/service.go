@@ -68,8 +68,10 @@ func launchdPlist(s serviceSpec) []byte {
 	fmt.Fprintf(&b, "\t<key>Label</key>\n\t%s\n", str(s.Label))
 	fmt.Fprintf(&b, "\t<key>ProgramArguments</key>\n\t<array>\n\t\t%s\n\t\t%s\n\t\t%s\n\t</array>\n", str(s.Bosund), str("--config"), str(s.Config))
 	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
-	// Restart after a crash (non-zero exit), not after a clean shutdown.
-	b.WriteString("\t<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>\n")
+	// Always keep it running (`bosun service stop` unloads it instead of
+	// killing it). A KeepAlive dict such as {SuccessfulExit: false} makes
+	// launchd treat the load-time start as "speculative" and defer it.
+	b.WriteString("\t<key>KeepAlive</key>\n\t<true/>\n")
 	b.WriteString("\t<key>ThrottleInterval</key>\n\t<integer>10</integer>\n")
 	fmt.Fprintf(&b, "\t<key>WorkingDirectory</key>\n\t%s\n", str(s.DataDir))
 	fmt.Fprintf(&b, "\t<key>StandardOutPath</key>\n\t%s\n", str(s.LogFile))
@@ -183,6 +185,36 @@ func (c *serviceCtl) loaded(ctx context.Context) bool {
 	return err == nil
 }
 
+// bootstrap loads the launchd job and starts it: launchd may defer the
+// RunAtLoad start of a freshly bootstrapped agent, so kickstart it too.
+func (c *serviceCtl) bootstrap(ctx context.Context) error {
+	if _, err := c.run(ctx, "launchctl", "bootstrap", c.domain(), c.unitPath()); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "launchctl", "kickstart", c.target())
+	return err
+}
+
+// bootout unloads the launchd job and waits (up to 10s) until launchd has
+// let go of it: bootout returns before the job is gone, and an immediate
+// bootstrap then fails with "Bootstrap failed: 5: Input/output error".
+func (c *serviceCtl) bootout(ctx context.Context) error {
+	if _, err := c.run(ctx, "launchctl", "bootout", c.target()); err != nil {
+		return err
+	}
+	for range 100 {
+		if !c.loaded(ctx) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("launchd still has %s loaded after bootout", c.spec.Label)
+}
+
 func (c *serviceCtl) install(ctx context.Context) error {
 	path := c.unitPath()
 	if c.spec.System && c.euid != 0 {
@@ -201,11 +233,11 @@ func (c *serviceCtl) install(ctx context.Context) error {
 	switch c.goos {
 	case "darwin":
 		if c.loaded(ctx) {
-			if _, err := c.run(ctx, "launchctl", "bootout", c.target()); err != nil {
+			if err := c.bootout(ctx); err != nil {
 				return err
 			}
 		}
-		if _, err := c.run(ctx, "launchctl", "bootstrap", c.domain(), path); err != nil {
+		if err := c.bootstrap(ctx); err != nil {
 			return err
 		}
 		fmt.Fprintf(c.out, "Loaded %s; it starts now and at every login. Logs: %s\n", c.spec.Label, c.spec.LogFile)
@@ -234,7 +266,7 @@ func (c *serviceCtl) uninstall(ctx context.Context) error {
 	switch c.goos {
 	case "darwin":
 		if c.loaded(ctx) {
-			if _, err := c.run(ctx, "launchctl", "bootout", c.target()); err != nil {
+			if err := c.bootout(ctx); err != nil {
 				return err
 			}
 		}
@@ -274,7 +306,7 @@ func (c *serviceCtl) start(ctx context.Context) error {
 		if c.loaded(ctx) {
 			_, err = c.run(ctx, "launchctl", "kickstart", c.target())
 		} else {
-			_, err = c.run(ctx, "launchctl", "bootstrap", c.domain(), c.unitPath())
+			err = c.bootstrap(ctx)
 		}
 		if err != nil {
 			return err
@@ -294,7 +326,7 @@ func (c *serviceCtl) stop(ctx context.Context) error {
 			fmt.Fprintf(c.out, "%s is not running.\n", c.spec.Label)
 			return nil
 		}
-		if _, err := c.run(ctx, "launchctl", "bootout", c.target()); err != nil {
+		if err := c.bootout(ctx); err != nil {
 			return err
 		}
 	} else if _, err := c.systemctl(ctx, "stop", c.unitName()); err != nil {
@@ -313,7 +345,7 @@ func (c *serviceCtl) restart(ctx context.Context) error {
 		if c.loaded(ctx) {
 			_, err = c.run(ctx, "launchctl", "kickstart", "-k", c.target())
 		} else {
-			_, err = c.run(ctx, "launchctl", "bootstrap", c.domain(), c.unitPath())
+			err = c.bootstrap(ctx)
 		}
 		if err != nil {
 			return err
@@ -326,9 +358,11 @@ func (c *serviceCtl) restart(ctx context.Context) error {
 }
 
 var (
-	launchdStateRe = regexp.MustCompile(`(?m)^\s*state = (\S+)`)
-	launchdPIDRe   = regexp.MustCompile(`(?m)^\s*pid = (\d+)`)
-	launchdExitRe  = regexp.MustCompile(`(?m)^\s*last exit code = (.+)$`)
+	// Top-level job properties are indented by exactly one tab; nested
+	// blocks (endpoints, ...) have their own "state = " lines.
+	launchdStateRe = regexp.MustCompile(`(?m)^\tstate = (.+)$`)
+	launchdPIDRe   = regexp.MustCompile(`(?m)^\tpid = (\d+)`)
+	launchdExitRe  = regexp.MustCompile(`(?m)^\tlast exit code = (.+)$`)
 )
 
 // state returns a one-line description of the service manager's view.
@@ -340,7 +374,7 @@ func (c *serviceCtl) state(ctx context.Context) (string, bool) {
 		}
 		state, pid, exit := "unknown", "", ""
 		if m := launchdStateRe.FindSubmatch(out); m != nil {
-			state = string(m[1])
+			state = strings.TrimSpace(string(m[1]))
 		}
 		if m := launchdPIDRe.FindSubmatch(out); m != nil {
 			pid = string(m[1])

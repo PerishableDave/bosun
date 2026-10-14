@@ -80,7 +80,7 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(dir, "data dir", "logs")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("log dir: %v %v", fi, err)
 	}
-	if got := strings.Join(fr.calls, "; "); got != "launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 "+plistPath {
+	if got := strings.Join(fr.calls, "; "); got != "launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 "+plistPath+"; launchctl kickstart gui/501/dev.bosun.test" {
 		t.Errorf("install calls = %s", got)
 	}
 
@@ -89,7 +89,7 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	if err := c.install(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(fr.calls, "; "), "launchctl bootout gui/501/dev.bosun.test; launchctl bootstrap") {
+	if !strings.Contains(strings.Join(fr.calls, "; "), "launchctl bootout gui/501/dev.bosun.test; launchctl print gui/501/dev.bosun.test; launchctl bootstrap") {
 		t.Errorf("reinstall calls = %v", fr.calls)
 	}
 
@@ -112,8 +112,8 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "launchctl print gui/501/dev.bosun.test; launchctl kickstart -k gui/501/dev.bosun.test; " +
-		"launchctl print gui/501/dev.bosun.test; launchctl bootout gui/501/dev.bosun.test; " +
-		"launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 " + plistPath
+		"launchctl print gui/501/dev.bosun.test; launchctl bootout gui/501/dev.bosun.test; launchctl print gui/501/dev.bosun.test; " +
+		"launchctl print gui/501/dev.bosun.test; launchctl bootstrap gui/501 " + plistPath + "; launchctl kickstart gui/501/dev.bosun.test"
 	if got := strings.Join(fr.calls, "; "); got != want {
 		t.Errorf("restart/stop/start calls =\n%s\nwant\n%s", got, want)
 	}
@@ -133,6 +133,18 @@ func TestLaunchdInstallLifecycle(t *testing.T) {
 	}
 	if err := c.start(ctx); err == nil {
 		t.Error("start after uninstall should fail")
+	}
+}
+
+func TestLaunchdStateParsing(t *testing.T) {
+	out := "gui/501/x = {\n\tactive count = 0\n\tstate = not running\n\tendpoints = {\n\t\t\"x\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n\tlast exit code = 1\n}\n"
+	c := &serviceCtl{goos: "darwin", uid: 501, spec: serviceSpec{Label: "x"},
+		run: func(context.Context, string, ...string) ([]byte, error) { return []byte(out), nil }}
+	if st, running := c.state(context.Background()); running || st != "not running, last exit code 1" {
+		t.Errorf("state = %q %v", st, running)
+	}
+	if !strings.Contains(string(launchdPlist(testSpec(t.TempDir()))), "<key>KeepAlive</key>\n\t<true/>") {
+		t.Error("KeepAlive must be a plain true (a dict defers the load-time start)")
 	}
 }
 

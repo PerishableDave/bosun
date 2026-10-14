@@ -277,6 +277,8 @@ func (k KeySource) String() string {
 		return "key from the vault (llm shared credential)"
 	case "env":
 		return "key from $" + k.Env
+	case "keyless":
+		return "no key needed"
 	}
 	return "no key"
 }
@@ -324,6 +326,9 @@ func LLM(ctx context.Context, hc *http.Client, name string, pc config.ProviderCo
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
 	case "ollama":
+		if src.Source == "" {
+			src.Source = "keyless"
+		}
 		base := strings.TrimRight(pc.BaseURL, "/")
 		if base == "" {
 			base = "http://localhost:11434"
