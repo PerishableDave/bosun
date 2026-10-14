@@ -119,6 +119,9 @@ func newCredentialsSetCmd(g *globals) *cobra.Command {
 			if name == "mcp" {
 				fmt.Fprintln(cmd.OutOrStdout(), "MCP servers connect at startup: restart bosund for the change to take effect.")
 			}
+			if name == "llm" {
+				fmt.Fprintln(cmd.OutOrStdout(), "bosund picks up the new key within 30 seconds; no restart needed.")
+			}
 			return nil
 		},
 	}

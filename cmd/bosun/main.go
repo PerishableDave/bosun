@@ -61,6 +61,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newCredentialsCmd(g))
 	root.AddCommand(newConnectCmd(g))
 	root.AddCommand(newChannelsCmd(g))
+	root.AddCommand(newVersionCmd(g), newDoctorCmd(g), newServiceCmd(g), newBackupCmd(g), newRestoreCmd(g))
 	return root
 }
 

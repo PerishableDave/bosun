@@ -93,11 +93,17 @@ type daemon struct {
 	// channels are the chat-app frontends (Telegram), started by Serve.
 	channels *channels.Manager
 
-	// bgCancel stops the daemon's own background workers (approval and
-	// session sweeps, the routine loop); bg tracks them so Close can wait
-	// for every writer before closing the store.
+	// The daemon's own background loops (approval and session sweeps, the
+	// routine loop) are tracked by bg so Close can wait for every writer
+	// before closing the store. stop ends them between iterations: their
+	// queries run on contexts that shutdown does not cancel, because a
+	// SQLite query interrupted mid-flight can leave its connection (and
+	// bosun.db-wal/-shm) open past db.Close. bgCancel cancels the base
+	// context handed to the agent and integrations.
 	bgCancel context.CancelFunc
 	bg       sync.WaitGroup
+	stop     chan struct{}
+	stopOnce sync.Once
 
 	// Doctor inputs.
 	vault    *vault.Vault
@@ -117,6 +123,56 @@ func (d *daemon) goBackground(f func()) {
 	}()
 }
 
+// loopIterationTimeout bounds one background loop iteration.
+const loopIterationTimeout = time.Minute
+
+// every runs f every interval (and once at once if immediate) on a tracked
+// goroutine until Close or until parent ends. Each run gets a context that
+// shutdown does not cancel (bounded by loopIterationTimeout), so an
+// in-flight query always completes and returns its connection.
+func (d *daemon) every(parent context.Context, interval time.Duration, immediate bool, f func(ctx context.Context)) {
+	base := context.WithoutCancel(parent)
+	run := func() {
+		ctx, cancel := context.WithTimeout(base, loopIterationTimeout)
+		defer cancel()
+		f(ctx)
+	}
+	d.goBackground(func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		if immediate {
+			select {
+			case <-d.stop:
+				return
+			case <-parent.Done():
+				return
+			default:
+				run()
+			}
+		}
+		for {
+			select {
+			case <-d.stop:
+				return
+			case <-parent.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	})
+}
+
+// stopBackground ends the background loops and waits for them.
+func (d *daemon) stopBackground() {
+	d.stopOnce.Do(func() {
+		if d.stop != nil {
+			close(d.stop)
+		}
+	})
+	d.bg.Wait()
+}
+
 // newDaemon opens the store and wires every component. The returned daemon
 // must be closed. Background workers (approval sweep, session sweep) run
 // until ctx ends.
@@ -125,7 +181,7 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	// Background workers stop when parent ends or when Close runs,
 	// whichever comes first.
 	ctx, cancel := context.WithCancel(parent)
-	d.bgCancel = cancel
+	d.bgCancel, d.stop = cancel, make(chan struct{})
 	defer func() {
 		if err != nil {
 			d.Close()
@@ -250,8 +306,19 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	if sweep <= 0 {
 		sweep = 30 * time.Second
 	}
-	d.goBackground(func() { appr.Run(ctx, sweep) })
-	d.goBackground(func() { sweepSessions(ctx, d.store, log) })
+	d.every(ctx, sweep, false, func(ctx context.Context) {
+		if _, err := appr.ExpireStale(ctx); err != nil {
+			log.Error("approval: expire sweep failed", "err", err)
+		}
+	})
+	st := d.store
+	d.every(ctx, time.Hour, true, func(ctx context.Context) {
+		if n, err := st.DeleteExpiredSessions(ctx); err != nil {
+			log.Warn("sweep sessions", "err", err)
+		} else if n > 0 {
+			log.Debug("swept expired sessions", "count", n)
+		}
+	})
 
 	// Dispatcher and agent.
 	d.hooks = hk
@@ -311,7 +378,10 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	d.apiSrv = apiSrv
 	d.handler = apiSrv.Handler()
 	sched := d.sched
-	d.goBackground(func() { sched.Run(ctx) })
+	// The routine loop stops through sched.Close (in Close); its due-check
+	// queries are not interrupted by shutdown (see daemon.stop).
+	loopCtx := context.WithoutCancel(ctx)
+	d.goBackground(func() { sched.Run(loopCtx) })
 	return d, nil
 }
 
@@ -460,10 +530,10 @@ func (d *daemon) Close() {
 		d.agent.Close()
 		d.agent = nil
 	}
+	d.stopBackground() // approval and session sweeps, the routine loop
 	if d.bgCancel != nil {
 		d.bgCancel()
 	}
-	d.bg.Wait() // approval and session sweeps, the routine loop
 	d.sched = nil
 	if d.oauthMgr != nil {
 		d.oauthMgr.Wait() // detached token refreshes write the vault

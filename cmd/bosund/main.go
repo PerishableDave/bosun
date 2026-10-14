@@ -13,11 +13,9 @@ import (
 	"sort"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/perishabledave/bosun/internal/config"
 	"github.com/perishabledave/bosun/internal/envfile"
-	"github.com/perishabledave/bosun/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -109,22 +107,4 @@ func ensureDataDir(dir string, log *slog.Logger) error {
 		log.Warn("data dir is accessible to other users; run `chmod 700` on it", "dir", dir, "mode", fi.Mode().Perm().String())
 	}
 	return nil
-}
-
-// sweepSessions periodically deletes expired sessions.
-func sweepSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
-	t := time.NewTicker(time.Hour)
-	defer t.Stop()
-	for {
-		if n, err := st.DeleteExpiredSessions(ctx); err != nil && ctx.Err() == nil {
-			log.Warn("sweep sessions", "err", err)
-		} else if n > 0 {
-			log.Debug("swept expired sessions", "count", n)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }
