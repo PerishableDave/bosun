@@ -494,6 +494,20 @@ Per-user, local, inspectable.
 - Auth: local username + password (argon2id). Session tokens are bearer tokens
   stored hashed; the CLI keeps its token in a mode-0600 file
   (`<data_dir>/cli-token`; OS keychain storage is planned).
+- User management: `bosun setup` creates the first admin; admins add users
+  through `POST /v1/users` (`bosun users add`, web UI *Users* page). Without
+  a password the account gets a random unknown password and a one-time invite
+  code (24 h, SHA-256 hash in the `invites` table, migration 0004), redeemed
+  unauthenticated at `POST /v1/invites/{code}/accept`, which sets the
+  password and returns a session. The code is looked up before any argon2
+  work, and redemption deletes the row in the same transaction that sets the
+  password (single use under concurrency). Reset issues a new invite and
+  revokes sessions; disabling revokes sessions and invites. Deleting a user
+  removes all their rows in one transaction (explicit deletes, not just FK
+  cascades) and records the ID in `deleted_users` so it is never reused
+  (in-memory state such as event subscriptions and caches is keyed by user
+  ID). The last enabled admin cannot be demoted, disabled or deleted. All of
+  it is audited as kind `auth`.
 - Transport: `bosund` listens on `127.0.0.1` by default. For household use the
   admin enables LAN binding (`bosun setup --lan`), which **requires** TLS:
   setup generates a self-signed ECDSA P-256 certificate (10 years; SANs: the

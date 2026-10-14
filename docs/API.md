@@ -42,6 +42,9 @@ All errors use one envelope:
 | 403 | `forbidden` | Answering an approval that belongs to another user, a non-admin calling an admin-only endpoint, or a member managing a shared credential |
 | 404 | `not_found` | No such endpoint or resource (or not yours) |
 | 409 | `conflict` | State precondition failed, e.g. approval already resolved or expired, or a turn already running |
+| 404 | `invalid_invite` | Invite code unknown, expired or already used (deliberately indistinguishable) |
+| 409 | `last_admin` | The change would leave no enabled admin |
+| 429 | `rate_limited` | Too many attempts; see `Retry-After` |
 | 500 | `internal` | Server error (details are logged, never returned) |
 | 501 | `not_implemented` | The endpoint's component is not configured on this server |
 | 503 | `unavailable` | The daemon is shutting down (e.g. starting a routine run during shutdown) |
@@ -820,6 +823,100 @@ The Telegram bot token is the shared credential `channels/telegram_bot_token`
 (`PUT /v1/credentials/channels/telegram_bot_token`, admin only). The
 `channels` integration appears in `GET /v1/integrations` while a channel is
 enabled, with its health (`down` until a token is set, `ok` while polling).
+
+### Household users
+
+`bosun setup` creates the first admin. Admins add everyone else; a new member
+gets a one-time **invite code** and chooses their own password, so the admin
+never knows it. Every change below is audited (kind `auth`, `user_id` = the
+acting user, `detail` = target user ID/username and what changed); passwords
+and invite codes are never logged or stored in clear (codes are stored as
+SHA-256 hashes).
+
+User objects in this section extend the [user object](#user-object):
+
+```json
+{ "id": 2, "username": "alice", "role": "member", "created_at": "…",
+  "disabled": false, "last_login_at": "…", "invite_expires_at": "…" }
+```
+
+`last_login_at` is absent until the first login (password or invite);
+`invite_expires_at` is present while an unredeemed invite is outstanding.
+
+#### `GET /v1/users` (admin only)
+
+Response `200`: `{ "users": [ <user>, … ] }`, ordered by ID.
+
+#### `POST /v1/users` (admin only)
+
+```json
+{ "username": "alice", "role": "member" }
+```
+
+`role` defaults to `member`. Response `201`:
+
+```json
+{ "user": <user>, "invite": { "code": "bsi_…", "expires_at": "…" } }
+```
+
+The code is valid for 24 hours and works once; it is returned only here. The
+account cannot log in until the invite is accepted. With `"password": "…"` in
+the request the password is set directly and `invite` is omitted. Errors:
+`400` (bad username, role, or password), `409 conflict` (username taken,
+case-insensitive).
+
+#### `POST /v1/invites/{code}/accept` (no auth)
+
+```json
+{ "password": "…", "username": "alice", "label": "cli" }
+```
+
+`username` is optional; if given it must match the invite. Sets the password,
+consumes the code (and any other invite of that user), revokes the user's
+existing sessions, and logs in. Response `200`: as [`POST /v1/login`](#post-v1login-implemented-no-auth).
+Errors: `400` (password too short, username mismatch), `404 invalid_invite`
+(unknown, expired, used, or the user is disabled), `429 rate_limited` (10
+attempts per minute per client address). The code is matched
+case-insensitively after trimming spaces.
+
+#### `PUT /v1/users/{id}` (admin only)
+
+```json
+{ "role": "admin", "disabled": true }
+```
+
+Either field may be omitted (not both). Disabling signs the user out
+everywhere and cancels pending invites; their data is kept. Response `200`:
+the user. Errors: `404`, `409 last_admin` when demoting or disabling the last
+enabled admin (including yourself).
+
+#### `DELETE /v1/users/{id}` (admin only)
+
+Deletes the user and, in one transaction, everything they own: sessions,
+invites, credentials, policy rules, conversations and messages, memories,
+routines and their runs, approvals, and channel links. References from other
+users' rows (an approval they resolved, a hook they created) become `null`.
+The audit log is kept. A deleted user's ID is never reused. Response `204`.
+Errors: `404`, `409 last_admin`.
+
+#### `POST /v1/users/{id}/reset-password` (admin only)
+
+Replaces the user's password with an unknown one, signs them out, and issues
+a new invite (any earlier code stops working). Response `200`:
+`{ "user": <user>, "invite": { "code": "bsi_…", "expires_at": "…" } }`.
+Errors: `400` (user is disabled), `404`.
+
+#### `PUT /v1/me/password`
+
+Any user changes their own password:
+
+```json
+{ "current": "…", "new": "…" }
+```
+
+Response `204`. All of the user's other sessions are revoked; the one making
+the request stays valid. Errors: `400` (new password too short),
+`403 invalid_credentials` (wrong current password).
 
 ---
 

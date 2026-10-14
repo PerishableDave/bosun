@@ -246,6 +246,7 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		Credentials:  vlt,
 		OAuth:        oauthMgr,
 		Channels:     d.channels,
+		Users:        d.auth,
 	})
 	if err != nil {
 		return nil, err
