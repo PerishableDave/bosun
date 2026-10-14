@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/agent"
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/dispatch"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/agent"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/dispatch"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // TurnRunner is the subset of *agent.Agent the runner needs.

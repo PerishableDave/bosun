@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"regexp"
 
-	"github.com/dperedo/bosun/internal/oauth"
+	"github.com/perishabledave/bosun/internal/oauth"
 )
 
 // OAuth is the subset of *oauth.Manager behind /v1/oauth and /oauth/callback.

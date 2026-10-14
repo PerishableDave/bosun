@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/api"
 )
 
 func TestRoutinesCommands(t *testing.T) {

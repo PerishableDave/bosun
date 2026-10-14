@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // Link codes.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 func req() llm.Request {

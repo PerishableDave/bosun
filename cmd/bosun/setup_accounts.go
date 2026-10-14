@@ -7,14 +7,14 @@ import (
 	"io"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/integrations/calendar"
-	"github.com/dperedo/bosun/internal/integrations/email"
-	"github.com/dperedo/bosun/internal/providers"
-	"github.com/dperedo/bosun/internal/store"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integrations/calendar"
+	"github.com/perishabledave/bosun/internal/integrations/email"
+	"github.com/perishabledave/bosun/internal/providers"
+	"github.com/perishabledave/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // detectKeychain finds the OS keychain for the vault master key, exactly as

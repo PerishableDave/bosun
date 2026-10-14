@@ -1,4 +1,4 @@
-module github.com/dperedo/bosun
+module github.com/perishabledave/bosun
 
 go 1.26.0
 

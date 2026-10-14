@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/hooks"
 )
 
 // Invocation describes why a run was started.

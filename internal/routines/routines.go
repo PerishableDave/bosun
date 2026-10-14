@@ -17,8 +17,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // Trigger says when a routine runs. Exactly one field is set.

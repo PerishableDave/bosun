@@ -14,7 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // Kind classifies a memory.

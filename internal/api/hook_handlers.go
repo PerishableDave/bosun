@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/dperedo/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/hooks"
 )
 
 // HookResponse describes one registered hook.

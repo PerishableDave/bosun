@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 func TestNew_UsesV1AndName(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/tlsutil"
 )
 
 // lanListen is the listen address `bosun setup --lan` configures.

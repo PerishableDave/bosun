@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // fakeDAV is an in-memory CalDAV server: PROPFIND discovery (well-known

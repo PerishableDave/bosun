@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 func runCLI(t *testing.T, stdin string, args ...string) (string, error) {

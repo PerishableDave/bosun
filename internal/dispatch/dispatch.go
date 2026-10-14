@@ -25,12 +25,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/policy"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/policy"
 )
 
 // DefaultHandlerTimeout bounds a single Handler invocation.

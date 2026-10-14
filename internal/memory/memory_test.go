@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 type env struct {

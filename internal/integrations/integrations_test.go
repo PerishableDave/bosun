@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const modulePath = "github.com/dperedo/bosun"
+const modulePath = "github.com/perishabledave/bosun"
 
 // forbiddenExact are imports no integration may use, except as allowed by
 // exactAllow.
@@ -145,29 +145,29 @@ func TestGuardCatchesViolations(t *testing.T) {
 	write("email/ok.go", `package email
 import (
 	"context"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/integrations/email/imap"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integrations/email/imap"
 )`)
 	write("email/imap/imap.go", `package imap
-import "github.com/dperedo/bosun/internal/integrations/email"`)
+import "github.com/perishabledave/bosun/internal/integrations/email"`)
 	write("email/bad.go", `package email
 import (
 	"os/exec"
-	st "github.com/dperedo/bosun/internal/store"
-	"github.com/dperedo/bosun/internal/auth/vault"
-	"github.com/dperedo/bosun/internal/integrations/calendar"
+	st "github.com/perishabledave/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/auth/vault"
+	"github.com/perishabledave/bosun/internal/integrations/calendar"
 )`)
 	write("email/worse.go", `package email
 import (
-	"github.com/dperedo/bosun/internal/vault"
-	"github.com/dperedo/bosun/internal/dispatch"
+	"github.com/perishabledave/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/dispatch"
 )`)
 	write("calendar/bad_test.go", `package calendar
-import _ "github.com/dperedo/bosun/internal/integrations/notes/sub"`)
+import _ "github.com/perishabledave/bosun/internal/integrations/notes/sub"`)
 	write("notes/x.go", `package notes
-import "github.com/dperedo/bosun/internal/integrations"`)
+import "github.com/perishabledave/bosun/internal/integrations"`)
 	write("root.go", `package integrations
-import "github.com/dperedo/bosun/internal/integrations/notes"`)
+import "github.com/perishabledave/bosun/internal/integrations/notes"`)
 	// The MCP bridge may spawn processes; its subpackages and others may not.
 	write("mcp/stdio.go", `package mcp
 import "os/exec"`)
@@ -183,14 +183,14 @@ import "os/exec"`)
 	joined := strings.Join(violations, "\n")
 	for _, want := range []string{
 		"bad.go:3:2: imports os/exec",
-		"imports github.com/dperedo/bosun/internal/store",
-		"imports github.com/dperedo/bosun/internal/auth/vault",
+		"imports github.com/perishabledave/bosun/internal/store",
+		"imports github.com/perishabledave/bosun/internal/auth/vault",
 		"bad.go:6:2: imports another integration (calendar)",
 		"bad_test.go:2:8: imports another integration (notes)",
 		"x.go:2:8: imports the integrations root package",
 		"root.go:2:8: imports another integration (notes)",
-		"worse.go:3:2: imports github.com/dperedo/bosun/internal/vault",
-		"worse.go:4:2: imports github.com/dperedo/bosun/internal/dispatch",
+		"worse.go:3:2: imports github.com/perishabledave/bosun/internal/vault",
+		"worse.go:4:2: imports github.com/perishabledave/bosun/internal/dispatch",
 		"sub.go:2:8: imports os/exec",
 		"x.go:2:8: imports os/exec",
 	} {

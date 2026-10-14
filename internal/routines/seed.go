@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // UserLookup resolves usernames (usually *store.Store).

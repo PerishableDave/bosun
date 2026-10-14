@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/tlsutil"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

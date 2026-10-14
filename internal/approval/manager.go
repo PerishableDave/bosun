@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // ErrCanceled is returned by Wait when the approval was canceled (its waiting

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 func TestRedact(t *testing.T) {

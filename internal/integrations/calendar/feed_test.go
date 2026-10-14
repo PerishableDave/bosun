@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // feedServer serves iCalendar feeds over TLS and counts fetches.

@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 func TestListHooks(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // Credential kinds.

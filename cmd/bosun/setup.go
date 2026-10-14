@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 func newSetupCmd(g *globals) *cobra.Command {

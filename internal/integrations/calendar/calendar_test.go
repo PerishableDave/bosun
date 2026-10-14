@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 var nyc = mustLoc("America/New_York")

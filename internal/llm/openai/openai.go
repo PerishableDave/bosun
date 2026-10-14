@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 const maxErrBody = 512

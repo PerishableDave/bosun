@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // Settings is the "mcp" section of bosun.yaml.

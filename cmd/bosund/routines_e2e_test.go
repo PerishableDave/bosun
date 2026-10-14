@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 // eventStream is a client's GET /v1/events stream.

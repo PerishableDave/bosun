@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/webui"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/webui"
 )
 
 // With a web UI mounted, / serves it while /v1 behaves exactly as before.

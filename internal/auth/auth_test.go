@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 var cheap = &Argon2Params{Memory: 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}

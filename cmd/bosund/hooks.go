@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/hooks/builtin"
-	"github.com/dperedo/bosun/internal/hooks/script"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/hooks/builtin"
+	"github.com/perishabledave/bosun/internal/hooks/script"
 )
 
 // buildHooks returns the hook registry: the built-in hooks enabled in config,

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 func TestExpandRecurrence(t *testing.T) {

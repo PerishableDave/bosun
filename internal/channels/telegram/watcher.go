@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/api/events"
 )
 
 // A watcher follows one linked user's event bus: it renders the user's

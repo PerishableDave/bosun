@@ -4,9 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/oauth"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/oauth"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // setupOAuth builds the account-linking manager from the oauth: section and

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 func TestRegistry(t *testing.T) {

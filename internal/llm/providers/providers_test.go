@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/config"
 )
 
 func TestFromConfig(t *testing.T) {

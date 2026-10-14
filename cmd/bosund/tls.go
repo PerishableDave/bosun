@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/tlsutil"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // detectKeychain finds the OS keychain for the vault master key. Tests

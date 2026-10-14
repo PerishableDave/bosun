@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // CredentialIntegration is the vault integration name channel secrets are

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // Credentials is the subset of *vault.Vault the credential endpoints need.

@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // Role is a user's role.

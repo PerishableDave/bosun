@@ -15,12 +15,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/store"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // fakeDaemon answers the credential test and store endpoints. Email

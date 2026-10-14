@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/routines"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/routines"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // echoRunner finishes every run immediately with a canned reply.

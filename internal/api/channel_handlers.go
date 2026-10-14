@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dperedo/bosun/internal/channels"
+	"github.com/perishabledave/bosun/internal/channels"
 )
 
 // Channels is what the channel endpoints need (usually *channels.Manager).

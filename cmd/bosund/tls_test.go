@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
-	"github.com/dperedo/bosun/internal/tlsutil"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // Tests never touch the real OS keychain.

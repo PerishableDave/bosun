@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/policy"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/policy"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // ConversationStore is the subset of *store.Store the conversation endpoints

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 type recAudit struct{ entries []audit.Entry }

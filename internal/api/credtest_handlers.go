@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // TestCredentialRequest is the body of POST /v1/integrations/{name}/test:

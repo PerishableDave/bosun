@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/integrations/calendar"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integrations/calendar"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // testerInteg is an email-like integration whose TestCredential accepts

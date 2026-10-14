@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/hooks/builtin"
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/hooks/builtin"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 func TestBuildHooks(t *testing.T) {

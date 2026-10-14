@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // EventReceived is emitted once per new INBOX message.

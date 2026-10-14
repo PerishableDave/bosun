@@ -5,12 +5,12 @@ import (
 	"errors"
 	"os"
 
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/channels"
-	"github.com/dperedo/bosun/internal/channels/telegram"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/channels"
+	"github.com/perishabledave/bosun/internal/channels/telegram"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // setupChannels builds the chat-app channels enabled under `channels:`.

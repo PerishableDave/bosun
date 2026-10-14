@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // clock is a settable test clock.

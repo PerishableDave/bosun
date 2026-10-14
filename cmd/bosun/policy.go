@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dperedo/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/api"
 )
 
 // authed returns the daemon base URL and the stored CLI token.

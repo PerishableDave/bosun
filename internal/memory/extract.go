@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 // Extraction limits.

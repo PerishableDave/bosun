@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 // ErrScriptExhausted is returned when more calls are made than turns scripted.

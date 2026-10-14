@@ -19,10 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // Vault names and timings.

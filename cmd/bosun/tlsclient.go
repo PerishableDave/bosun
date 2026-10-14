@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dperedo/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/tlsutil"
 )
 
 // ServerFileName holds the server the CLI logged in to and how to verify its

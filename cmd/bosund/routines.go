@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/routines"
+	"github.com/perishabledave/bosun/internal/routines"
 )
 
 // routineShutdownGrace is how long Close waits for in-flight routine runs

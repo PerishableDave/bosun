@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/oauth"
+	"github.com/perishabledave/bosun/internal/oauth"
 )
 
 // IdP is a fake identity provider. Exported fields may be changed between

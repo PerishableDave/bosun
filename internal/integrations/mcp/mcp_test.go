@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/integrations/mcp/mcptest"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integrations/mcp/mcptest"
 )
 
 // TestMain lets the test binary double as the fake stdio MCP server.

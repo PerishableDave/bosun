@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/agent"
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/agent"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // fakeRunner records invocations; each run blocks until released (if gate

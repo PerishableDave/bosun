@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/routines"
+	"github.com/perishabledave/bosun/internal/routines"
 )
 
 // Routines is what the routine endpoints need (usually

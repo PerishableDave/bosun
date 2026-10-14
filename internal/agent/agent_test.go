@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/dispatch"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
-	"github.com/dperedo/bosun/internal/policy"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/dispatch"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/policy"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 type writer struct{}

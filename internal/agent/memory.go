@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/memory"
+	"github.com/perishabledave/bosun/internal/memory"
 )
 
 // DefaultRecallLimit is the default number of relevance-ranked memories

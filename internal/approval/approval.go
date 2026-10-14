@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // Status is an approval's lifecycle state.

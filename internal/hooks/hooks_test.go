@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 func TestRegistry(t *testing.T) {

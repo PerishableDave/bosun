@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 func TestRunWithModelOverride(t *testing.T) {

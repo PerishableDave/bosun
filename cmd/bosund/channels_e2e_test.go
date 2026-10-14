@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
 )
 
 // tgFake is a minimal Telegram Bot API: queued updates go out through

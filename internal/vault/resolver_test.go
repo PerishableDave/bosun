@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 type recResolver struct {

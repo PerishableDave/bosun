@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 func newStore(t *testing.T) *store.Store {

@@ -43,11 +43,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/approval"
-	"github.com/dperedo/bosun/internal/audit"
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/approval"
+	"github.com/perishabledave/bosun/internal/audit"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 // Limits.

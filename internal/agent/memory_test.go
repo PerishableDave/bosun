@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
-	"github.com/dperedo/bosun/internal/memory"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/memory"
 )
 
 // withMem enables memory on e's agent, with extraction on a separate

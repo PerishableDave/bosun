@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

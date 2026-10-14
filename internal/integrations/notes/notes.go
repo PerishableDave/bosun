@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // Settings is the "notes" section of bosun.yaml.

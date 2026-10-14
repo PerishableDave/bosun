@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/hooks"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/hooks"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 // wireIntegrationEvents hands background-capable integrations their

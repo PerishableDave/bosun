@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // IntegrationResponse describes one initialised integration.

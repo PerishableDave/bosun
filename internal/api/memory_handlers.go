@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dperedo/bosun/internal/memory"
+	"github.com/perishabledave/bosun/internal/memory"
 )
 
 // Memories is the subset of *memory.Store the memory endpoints need. Every

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // SecretsIntegration is a tool-less pseudo-integration named "oauth" that the

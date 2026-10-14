@@ -3,7 +3,7 @@ package policy
 import (
 	"testing"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 func TestDefaultsForRisk(t *testing.T) {

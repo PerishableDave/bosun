@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 func newNotes(t *testing.T, settings string, opts ...func(*Integration)) (*Integration, string) {

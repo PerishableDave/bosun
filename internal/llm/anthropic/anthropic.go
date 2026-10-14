@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm"
 )
 
 // Defaults.

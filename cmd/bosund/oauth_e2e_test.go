@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/api"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/fake"
-	"github.com/dperedo/bosun/internal/oauth"
-	"github.com/dperedo/bosun/internal/oauth/oauthtest"
+	"github.com/perishabledave/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/fake"
+	"github.com/perishabledave/bosun/internal/oauth"
+	"github.com/perishabledave/bosun/internal/oauth/oauthtest"
 )
 
 // credStub is a per-user integration that keeps the CredentialSource the

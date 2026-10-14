@@ -6,11 +6,11 @@ import (
 	"os"
 	"sort"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/llm"
-	"github.com/dperedo/bosun/internal/llm/anthropic"
-	"github.com/dperedo/bosun/internal/llm/ollama"
-	"github.com/dperedo/bosun/internal/llm/openai"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/llm"
+	"github.com/perishabledave/bosun/internal/llm/anthropic"
+	"github.com/perishabledave/bosun/internal/llm/ollama"
+	"github.com/perishabledave/bosun/internal/llm/openai"
 )
 
 // FromConfig registers every provider listed in cfg.LLM.Providers. Supported

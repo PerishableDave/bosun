@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/api"
+	"github.com/perishabledave/bosun/internal/api"
 )
 
 func sse(w http.ResponseWriter, evs ...[2]string) {

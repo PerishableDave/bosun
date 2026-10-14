@@ -12,13 +12,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dperedo/bosun/internal/api/events"
-	"github.com/dperedo/bosun/internal/auth"
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/oauth"
-	"github.com/dperedo/bosun/internal/oauth/oauthtest"
-	"github.com/dperedo/bosun/internal/store"
-	"github.com/dperedo/bosun/internal/vault"
+	"github.com/perishabledave/bosun/internal/api/events"
+	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/oauth"
+	"github.com/perishabledave/bosun/internal/oauth/oauthtest"
+	"github.com/perishabledave/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/vault"
 )
 
 func TestOAuthEndpointsRoundTrip(t *testing.T) {

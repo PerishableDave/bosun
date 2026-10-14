@@ -34,7 +34,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dperedo/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integration"
 )
 
 // Settings is the "email" section of bosun.yaml. Accounts are per user and

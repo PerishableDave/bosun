@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/llm/openai"
+	"github.com/perishabledave/bosun/internal/llm/openai"
 )
 
 // DefaultBaseURL is Ollama's default listen address.

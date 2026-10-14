@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dperedo/bosun/internal/config"
-	"github.com/dperedo/bosun/internal/tlsutil"
+	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/tlsutil"
 )
 
 // tlsDaemon is a fake bosund over HTTPS with a generated self-signed cert.

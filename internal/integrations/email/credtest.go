@@ -7,8 +7,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/dperedo/bosun/internal/integration"
-	"github.com/dperedo/bosun/internal/providers"
+	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/providers"
 )
 
 var _ integration.CredentialTester = (*Integration)(nil)
