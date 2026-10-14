@@ -1,0 +1,35 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# gofmt decides; tabs.
+[*.go]
+indent_style = tab
+
+[{Makefile,*.mk}]
+indent_style = tab
+
+# install.sh and the container scripts indent with tabs.
+[*.sh]
+indent_style = tab
+
+[*.{yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+[Caddyfile]
+indent_style = tab
+
+[*.md]
+indent_style = space
+indent_size = 2
+# Two trailing spaces are a Markdown line break.
+trim_trailing_whitespace = false
+
+[*.{html,css,js}]
+indent_style = space
+indent_size = 2

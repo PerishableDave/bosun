@@ -6,7 +6,7 @@ LDFLAGS := -X main.version=$(VERSION)
 GORELEASER ?= $(shell command -v goreleaser 2>/dev/null || echo "$(GO) run github.com/goreleaser/goreleaser/v2@latest")
 IMAGE ?= bosun:dev
 
-.PHONY: all build test vet lint fmt clean release-snapshot docker
+.PHONY: all build test test-race check vet lint fmt clean release-snapshot docker
 
 all: build
 
@@ -17,14 +17,24 @@ build:
 test:
 	$(GO) test ./...
 
+# test-race is what CI runs (needs cgo, i.e. a C compiler, on Linux).
+test-race:
+	$(GO) test -race -count=1 ./...
+
+# check is everything CI checks for Go code: run it before opening a PR.
+check: lint test-race
+
 vet:
 	$(GO) vet ./...
 
-# lint runs gofmt checks, go vet, and the integration import guard test.
-# golangci-lint is intentionally not required.
+# lint runs gofmt checks, go vet, and the architecture guard tests: the
+# integration import guard (no os/exec, store, auth, vault, dispatch or other
+# integrations under internal/integrations) and the dispatcher choke-point
+# scanner. golangci-lint is intentionally not required.
 lint: vet
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
-	$(GO) test ./internal/integrations/...
+	$(GO) test -count=1 -run 'TestIntegrationImports|TestGuardCatchesViolations' ./internal/integrations
+	$(GO) test -count=1 -run 'TestOnlyDispatcherInvokesHandlers|TestChokepointScannerDetects' ./internal/dispatch
 
 fmt:
 	gofmt -w .
