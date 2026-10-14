@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      golang-x:
+        patterns: ["golang.org/x/*"]
+      modernc:
+        patterns: ["modernc.org/*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Dockerfile (build from source) and deploy/docker/Dockerfile.goreleaser
+  # (release image).
+  - package-ecosystem: docker
+    directories: ["/", "/deploy/docker"]
+    schedule:
+      interval: weekly
