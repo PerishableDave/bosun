@@ -102,6 +102,8 @@ internal/
   tlsutil/           self-signed cert generation, fingerprints, pinned clients
   api/               HTTP + SSE handlers, request auth
   config/            bosun.yaml loading, validation, defaults
+  envfile/           $data_dir/env loading (0600 KEY=VALUE file)
+  doctor/            health checks behind `bosun doctor` and GET /v1/doctor
   store/             SQLite schema, migrations, queries
   audit/             append-only action log
 web/                 web UI source; built output embedded into bosund
@@ -555,11 +557,13 @@ daemon:
   data_dir: ~/.bosun
   tls: { enabled: false }   # cert_file, key_file; `bosun setup --lan` fills these in
   master_key: auto          # auto | keychain | file
+  # behind_proxy: true      # TLS terminated by Tailscale Serve / Caddy; exclusive with tls
+  # trusted_proxies: [127.0.0.1]
 
 llm:
   default: anthropic/claude-sonnet-5-5
   providers:
-    anthropic: { api_key_env: ANTHROPIC_API_KEY }
+    anthropic: { api_key_env: ANTHROPIC_API_KEY }   # fallback; the vault's llm/anthropic wins
     ollama:    { base_url: http://localhost:11434 }
 
 integrations:
@@ -582,8 +586,38 @@ hooks:
 telemetry: { enabled: false }
 ```
 
-`bosun setup` writes this file interactively, creates the first admin user,
-generates keys, and offers to install a launchd/systemd unit.
+`bosun setup` writes this file interactively, creates the first admin user and
+generates keys; `bosun service install` writes a launchd user agent (macOS) or
+a systemd unit (Linux, `--user` by default, `--system` for a dedicated `bosun`
+user) that runs `bosund --config <abs path>`.
+
+**Secrets stay out of the config and out of unit files.** Three places hold
+them, in the order the daemon prefers:
+
+1. The vault (encrypted in `bosun.db`): integration credentials, and LLM API
+   keys as the shared credential `llm/<provider>` of the tool-less `llm`
+   pseudo-integration (the same pattern as `oauth` client secrets and
+   `channels` bot tokens). `internal/llm/providers.Keys` resolves a provider's
+   key per request: vault, then `$api_key_env`, else none. Vault hits are
+   cached for 30 s, misses are not, so `bosun credentials set llm anthropic`
+   takes effect without a restart.
+2. `$data_dir/env`: optional `KEY=VALUE` lines that `bosund` adds to its own
+   environment at startup (variables already set win). It must be a regular
+   file owned by the daemon's user with no group/other permission bits, or the
+   daemon refuses to start; only variable names are logged. This is how a
+   service gets `api_key_env`/`client_secret_env`/`token_env` values without a
+   plist or unit file ever containing them.
+3. The process environment.
+
+**Operations.** `bosun doctor` combines CLI-side checks (config, daemon
+reachability and version) with `GET /v1/doctor` (admin; data dir, key
+source, LLM key sources and reachability probes, integration and channel
+status, TLS expiry, scheduler, disk, proxy sanity; `internal/doctor`), or
+local checks when the daemon is down. `bosun backup` archives the config, a
+`VACUUM INTO` snapshot of the database and the data dir's state (the master
+key only when file-based, or with `--include-keychain-key`); `bosun restore`
+checks the archive's schema version against the binary's migrations before
+writing anything.
 
 ## Storage
 
@@ -613,8 +647,22 @@ What Bosun trusts and doesn't.
   backstop.
 - **Capability enforcement:** the dispatcher is the single choke point; tests
   assert that no `Handler` is reachable without a `policy.Decide` call.
+- **Network exposure:** `bosund` listens on loopback by default. A
+  non-loopback listen requires either TLS (`daemon.tls`) or
+  `daemon.behind_proxy: true`, which declares that a TLS-terminating reverse
+  proxy fronts it (the two are mutually exclusive). Behind a proxy the daemon
+  serves plain HTTP, so it should listen on loopback with the proxy on the same
+  host. `X-Forwarded-For`/`-Proto`/`-Host` are believed only on connections
+  from `daemon.trusted_proxies` (default: loopback and private ranges, with a
+  startup warning), and only for logging and building absolute URLs (the OAuth
+  redirect); they never affect authentication. Forwarded headers from anyone
+  else are ignored and counted, and `bosun doctor` reports them.
+- **Secrets at rest:** the vault (AES-256-GCM under the master key) and the
+  optional `$data_dir/env` (mode 0600, enforced). Service definitions, logs and
+  backups-without-`--include-keychain-key` never contain the master key; a
+  backup is written 0600 and may contain `master.key` and `env`.
 - **Outbound network:** only LLM providers and enabled integrations make
-  network calls. The audit log records every outbound LLM request (provider,
+  network calls (plus `bosun doctor`'s explicit, logged reachability probes). The audit log records every outbound LLM request (provider,
   model, token counts; not content unless `audit.log_content: true`).
 - **Supply chain:** first-party integrations are vendored Go; MCP servers are
   the user's choice and are clearly labelled as third-party in the UI.

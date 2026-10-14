@@ -3,8 +3,16 @@
 `bosund` serves a JSON + Server-Sent Events API, by default on
 `http://127.0.0.1:7777`. LAN binding requires TLS (`bosun setup --lan`
 generates a self-signed certificate; `bosund` logs its SHA-256 fingerprint at
-startup so clients can pin it). The `bosun` CLI and the web UI are clients of
+startup so clients can pin it), or `daemon.behind_proxy: true` behind a
+TLS-terminating reverse proxy. The `bosun` CLI and the web UI are clients of
 this API.
+
+**Forwarded headers.** `X-Forwarded-For`, `X-Forwarded-Proto` and
+`X-Forwarded-Host` are honoured only when `daemon.behind_proxy` is set and the
+TCP peer is in `daemon.trusted_proxies`; otherwise they are ignored. They
+affect the client address in logs and absolute URLs the daemon builds (the
+OAuth `redirect_url`). The client is the right-most `X-Forwarded-For` hop
+that is not itself a trusted proxy.
 
 All endpoints below are implemented. An endpoint whose backing component is
 not configured on a given server (only possible when embedding `api.Server`
@@ -333,6 +341,13 @@ Response `200`:
 
 - `status` is `ok`, `degraded` or `down`. Integrations that do not report
   health are always `ok`.
+- Tool-less pseudo-integrations appear too, so their credential kinds can be
+  set: `oauth` (client secrets, when `oauth:` providers are configured),
+  `channels` (chat-app bot tokens, when a channel is enabled), and `llm`
+  (shared LLM API keys, kinds = configured provider names, when some provider
+  takes a key; its `message` says where each provider's key comes from, e.g.
+  `anthropic: vault, ollama: no key needed`, and it is `degraded` while a
+  provider that needs a key has none).
 - `details` is integration-specific and only returned to admins (it can contain
   commands, URLs and error text). For `mcp` it is one entry per configured
   server; `state` is `ready`, `failed` (never connected), `exited` (the stdio
@@ -408,6 +423,49 @@ Response `200`:
   fails the turn (the stream ends with an `error` event whose message starts
   `blocked by pre_model_call hook`). Script hook failures are recorded in the
   audit log with `kind = hook`.
+
+### `GET /v1/doctor` (admin only)
+
+Runs the daemon-side health checks behind `bosun doctor`, so the CLI does not
+need the data dir (it may be on another machine). Members get `403 forbidden`.
+Checks that call out (each LLM provider's reachability probe) take up to a few
+seconds; the CLI uses a long timeout.
+
+Response `200`:
+
+```json
+{
+  "version": "v0.4.0",
+  "status": "warn",
+  "checks": [
+    {"name": "data dir", "status": "ok", "detail": "/home/dave/.bosun (0700)"},
+    {"name": "master key", "status": "ok", "detail": "macOS Keychain (service bosun, account master-key) (loaded)"},
+    {"name": "llm anthropic", "status": "ok", "detail": "key from the vault (llm shared credential); reachable"},
+    {"name": "llm ollama", "status": "warn", "detail": "no key needed; unreachable: ... connection refused"},
+    {"name": "integration email", "status": "ok", "detail": "6 tools"},
+    {"name": "channels", "status": "ok", "detail": "none enabled"},
+    {"name": "tls", "status": "ok", "detail": "certificate valid until 2035-10-01 (3640 days); sha256 3A:7F:…"},
+    {"name": "routines", "status": "ok", "detail": "scheduler running; 3 routines (2 enabled)"},
+    {"name": "disk space", "status": "ok", "detail": "211.4 GiB free"},
+    {"name": "reverse proxy", "status": "ok", "detail": "not behind a proxy"}
+  ]
+}
+```
+
+- `status` (per check and overall) is `ok`, `warn` or `fail`; the overall
+  value is the worst check. `detail` is human-readable and never contains a
+  secret.
+- LLM checks: the key source is the shared vault credential `llm/<provider>`,
+  then `$api_key_env`. Anthropic and OpenAI are probed by listing models,
+  Ollama with `/api/tags`. A problem with a provider used by `llm.default` or
+  `memory.extract_model` is `fail`; with any other provider, `warn`. Each probe
+  is logged.
+- `reverse proxy` warns when requests carried `X-Forwarded-*` headers from an
+  address outside `daemon.trusted_proxies` (or with `daemon.behind_proxy` off),
+  when `trusted_proxies` is unset, or when a proxied daemon listens on a
+  non-loopback address.
+- The pseudo-integration `llm` is not listed separately (the `llm …` checks
+  cover it).
 
 ### `GET /v1/memory`
 
