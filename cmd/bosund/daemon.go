@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/perishabledave/bosun/internal/agent"
@@ -33,6 +34,7 @@ import (
 	"github.com/perishabledave/bosun/internal/llm"
 	"github.com/perishabledave/bosun/internal/llm/providers"
 	"github.com/perishabledave/bosun/internal/memory"
+	"github.com/perishabledave/bosun/internal/oauth"
 	"github.com/perishabledave/bosun/internal/policy"
 	"github.com/perishabledave/bosun/internal/routines"
 	"github.com/perishabledave/bosun/internal/store"
@@ -90,13 +92,96 @@ type daemon struct {
 
 	// channels are the chat-app frontends (Telegram), started by Serve.
 	channels *channels.Manager
+
+	// The daemon's own background loops (approval and session sweeps, the
+	// routine loop) are tracked by bg so Close can wait for every writer
+	// before closing the store. stop ends them between iterations: their
+	// queries run on contexts that shutdown does not cancel, because a
+	// SQLite query interrupted mid-flight can leave its connection (and
+	// bosun.db-wal/-shm) open past db.Close. bgCancel cancels the base
+	// context handed to the agent and integrations.
+	bgCancel context.CancelFunc
+	bg       sync.WaitGroup
+	stop     chan struct{}
+	stopOnce sync.Once
+
+	// Doctor inputs.
+	vault    *vault.Vault
+	keyDesc  string
+	llmKeys  *providers.Keys
+	apiSrv   *api.Server
+	oauthMgr *oauth.Manager
+	listed   []integration.Integration // as listed by GET /v1/integrations
+}
+
+// goBackground runs f on a tracked goroutine (see Close).
+func (d *daemon) goBackground(f func()) {
+	d.bg.Add(1)
+	go func() {
+		defer d.bg.Done()
+		f()
+	}()
+}
+
+// loopIterationTimeout bounds one background loop iteration.
+const loopIterationTimeout = time.Minute
+
+// every runs f every interval (and once at once if immediate) on a tracked
+// goroutine until Close or until parent ends. Each run gets a context that
+// shutdown does not cancel (bounded by loopIterationTimeout), so an
+// in-flight query always completes and returns its connection.
+func (d *daemon) every(parent context.Context, interval time.Duration, immediate bool, f func(ctx context.Context)) {
+	base := context.WithoutCancel(parent)
+	run := func() {
+		ctx, cancel := context.WithTimeout(base, loopIterationTimeout)
+		defer cancel()
+		f(ctx)
+	}
+	d.goBackground(func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		if immediate {
+			select {
+			case <-d.stop:
+				return
+			case <-parent.Done():
+				return
+			default:
+				run()
+			}
+		}
+		for {
+			select {
+			case <-d.stop:
+				return
+			case <-parent.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	})
+}
+
+// stopBackground ends the background loops and waits for them.
+func (d *daemon) stopBackground() {
+	d.stopOnce.Do(func() {
+		if d.stop != nil {
+			close(d.stop)
+		}
+	})
+	d.bg.Wait()
 }
 
 // newDaemon opens the store and wires every component. The returned daemon
 // must be closed. Background workers (approval sweep, session sweep) run
 // until ctx ends.
-func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp deps) (_ *daemon, err error) {
+func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp deps) (_ *daemon, err error) {
 	d := &daemon{cfg: cfg, log: log}
+	// Background workers stop when parent ends or when Close runs,
+	// whichever comes first.
+	ctx, cancel := context.WithCancel(parent)
+	d.bgCancel, d.stop = cancel, make(chan struct{})
 	defer func() {
 		if err != nil {
 			d.Close()
@@ -124,19 +209,6 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		log.Warn("no users exist; run `bosun setup` to create the first admin")
 	}
 
-	// LLM providers. Keys are read from the environment by FromConfig and
-	// never logged.
-	llms := dp.LLM
-	if llms == nil {
-		if llms, err = providers.FromConfig(cfg); err != nil {
-			return nil, err
-		}
-	}
-	if _, _, err := llms.Resolve(cfg.LLM.Default); err != nil {
-		return nil, fmt.Errorf("llm.default: %w", err)
-	}
-	log.Info("llm providers registered", "providers", strings.Join(llms.Names(), ","), "default_model", cfg.LLM.Default)
-
 	// Integrations: Init, then Register.
 	auditLog := audit.NewStoreLogger(d.store, audit.Options{LogContent: cfg.Audit.LogContent})
 	keys, keyDesc, err := vault.SelectKeySource(ctx, vault.KeySourceOptions{
@@ -147,10 +219,43 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	}
 	log.Info("vault master key ready", "source", keyDesc)
 	vlt := vault.New(d.store, keys)
+	d.vault, d.keyDesc = vlt, keyDesc
+
+	// LLM providers. API keys are looked up per request (cached briefly):
+	// the shared vault credential llm/<provider>, else $api_key_env. They
+	// are never logged.
+	d.llmKeys = providers.NewKeys(cfg, func(ctx context.Context, provider string) (string, error) {
+		c, err := vlt.Get(ctx, nil, providers.CredentialIntegration, provider)
+		if errors.Is(err, vault.ErrNotFound) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return c.Secret, nil
+	})
+	llms := dp.LLM
+	if llms == nil {
+		if llms, err = providers.FromConfig(cfg, providers.WithKeys(d.llmKeys)); err != nil {
+			return nil, err
+		}
+	}
+	if _, _, err := llms.Resolve(cfg.LLM.Default); err != nil {
+		return nil, fmt.Errorf("llm.default: %w", err)
+	}
+	log.Info("llm providers registered", "providers", strings.Join(llms.Names(), ","), "default_model", cfg.LLM.Default)
+	// The tool-less "llm" integration lets an admin store provider keys
+	// with `bosun credentials set llm <provider> --shared`. It is listed
+	// when some provider takes a key (not for an Ollama-only setup).
+	if d.llmKeys.AnyNeedsKey() {
+		d.integrations = append(d.integrations, d.llmKeys.Integration())
+	}
+
 	oauthMgr, err := d.setupOAuth(vlt, auditLog)
 	if err != nil {
 		return nil, err
 	}
+	d.oauthMgr = oauthMgr
 	tools := integration.NewRegistry()
 	for _, in := range d.enabledIntegrations(dp) {
 		if err := d.initIntegration(ctx, tools, vlt, in); err != nil {
@@ -201,8 +306,19 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	if sweep <= 0 {
 		sweep = 30 * time.Second
 	}
-	go appr.Run(ctx, sweep)
-	go sweepSessions(ctx, d.store, log)
+	d.every(ctx, sweep, false, func(ctx context.Context) {
+		if _, err := appr.ExpireStale(ctx); err != nil {
+			log.Error("approval: expire sweep failed", "err", err)
+		}
+	})
+	st := d.store
+	d.every(ctx, time.Hour, true, func(ctx context.Context) {
+		if n, err := st.DeleteExpiredSessions(ctx); err != nil {
+			log.Warn("sweep sessions", "err", err)
+		} else if n > 0 {
+			log.Debug("swept expired sessions", "count", n)
+		}
+	})
 
 	// Dispatcher and agent.
 	d.hooks = hk
@@ -236,6 +352,11 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 	}
 	initialised := slices.Clone(d.integrations) // Close mutates d.integrations
 	initialised = append(initialised, d.channelIntegrations()...)
+	d.listed = initialised
+	proxyNets, err := cfg.Daemon.ProxyNets()
+	if err != nil {
+		return nil, err
+	}
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
@@ -247,12 +368,21 @@ func newDaemon(ctx context.Context, cfg *config.Config, log *slog.Logger, dp dep
 		OAuth:        oauthMgr,
 		Channels:     d.channels,
 		Users:        d.auth,
+
+		TrustedProxies: proxyNets,
+		ProxyStats:     &api.ProxyStats{},
+		Doctor:         d.doctorChecks,
 	})
 	if err != nil {
 		return nil, err
 	}
+	d.apiSrv = apiSrv
 	d.handler = apiSrv.Handler()
-	go d.sched.Run(ctx)
+	sched := d.sched
+	// The routine loop stops through sched.Close (in Close); its due-check
+	// queries are not interrupted by shutdown (see daemon.stop).
+	loopCtx := context.WithoutCancel(ctx)
+	d.goBackground(func() { sched.Run(loopCtx) })
 	return d, nil
 }
 
@@ -382,20 +512,32 @@ func (d *daemon) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
-// Close cancels and waits for the agent's background work (memory
-// extraction), then releases integrations and the store. It is safe on a
-// partially built daemon.
+// Close stops everything that can write to the data dir and waits for it
+// before closing the store, so nothing touches the data dir after Close
+// returns: channels (and their turns), the routine scheduler (and its
+// runs), the agent's memory extraction, the daemon's own sweeps and loops,
+// OAuth token refreshes, then integrations (the email poller and its state
+// file, MCP children) and finally the store. It is safe on a partially
+// built daemon and idempotent.
 func (d *daemon) Close() {
 	d.closeChannels()
+	d.channels = nil
 	if d.sched != nil {
 		// In-flight routine runs get a few seconds to finish, then are
 		// canceled (and recorded as canceled).
 		d.sched.Close(routineShutdownGrace)
-		d.sched = nil
 	}
 	if d.agent != nil {
 		d.agent.Close()
 		d.agent = nil
+	}
+	d.stopBackground() // approval and session sweeps, the routine loop
+	if d.bgCancel != nil {
+		d.bgCancel()
+	}
+	d.sched = nil
+	if d.oauthMgr != nil {
+		d.oauthMgr.Wait() // detached token refreshes write the vault
 	}
 	for i := len(d.integrations) - 1; i >= 0; i-- {
 		in := d.integrations[i]

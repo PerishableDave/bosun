@@ -68,14 +68,15 @@ func (s *Server) oauthError(w http.ResponseWriter, r *http.Request, op string, e
 
 // callbackURL is the daemon's /oauth/callback as the client reached it. The
 // browser runs where the CLI runs, so a loopback daemon yields
-// http://127.0.0.1:<port>/oauth/callback and a LAN daemon
-// https://<host>:<port>/oauth/callback.
+// http://127.0.0.1:<port>/oauth/callback, a LAN daemon
+// https://<host>:<port>/oauth/callback, and a daemon behind a trusted proxy
+// (daemon.behind_proxy) the proxy's public scheme and host.
 func callbackURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+	c, ok := ClientFromContext(r.Context())
+	if !ok {
+		c, _ = resolveClient(r, nil)
 	}
-	return (&url.URL{Scheme: scheme, Host: r.Host, Path: oauth.CallbackPath}).String()
+	return (&url.URL{Scheme: c.Scheme, Host: c.Host, Path: oauth.CallbackPath}).String()
 }
 
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {

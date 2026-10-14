@@ -21,9 +21,12 @@ const maxErrBody = 512
 
 // Config configures a Provider.
 type Config struct {
-	Name       string       // registry name; default "openai"
-	BaseURL    string       // required, e.g. https://api.openai.com/v1
-	APIKey     string       // optional; sent as a Bearer token, never logged
+	Name    string // registry name; default "openai"
+	BaseURL string // required, e.g. https://api.openai.com/v1
+	APIKey  string // optional; sent as a Bearer token, never logged
+	// KeyFunc, if set, is called for every request instead of using
+	// APIKey (see anthropic.Config.KeyFunc).
+	KeyFunc    func(ctx context.Context) (string, error)
 	HTTPClient *http.Client // optional
 }
 
@@ -32,6 +35,7 @@ type Provider struct {
 	name      string
 	baseURL   string
 	apiKey    string
+	keyFunc   func(ctx context.Context) (string, error)
 	client    *http.Client
 	maxTokKey string
 }
@@ -60,7 +64,7 @@ func New(cfg Config) (*Provider, error) {
 	if u.Hostname() == "api.openai.com" {
 		key = "max_completion_tokens" // required by newer OpenAI models
 	}
-	return &Provider{name: name, baseURL: base, apiKey: cfg.APIKey, client: c, maxTokKey: key}, nil
+	return &Provider{name: name, baseURL: base, apiKey: cfg.APIKey, keyFunc: cfg.KeyFunc, client: c, maxTokKey: key}, nil
 }
 
 // Name implements llm.Provider.
@@ -217,8 +221,14 @@ func (p *Provider) do(ctx context.Context, body []byte, stream bool) (*http.Resp
 		return nil, fmt.Errorf("%s: build request: %w", p.name, err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		hreq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	key := p.apiKey
+	if p.keyFunc != nil {
+		if key, err = p.keyFunc(ctx); err != nil {
+			return nil, fmt.Errorf("%s: API key: %w", p.name, err)
+		}
+	}
+	if key != "" {
+		hreq.Header.Set("Authorization", "Bearer "+key)
 	}
 	if stream {
 		hreq.Header.Set("Accept", "text/event-stream")

@@ -293,11 +293,15 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, UserInviteResponse{User: info, Invite: inv})
 }
 
-// clientKey identifies a client address for rate limiting.
-func clientKey(r *http.Request) int64 {
+// rateLimitKey identifies a client address for rate limiting, using the
+// proxy-aware client IP when the proxy middleware has resolved one.
+func rateLimitKey(r *http.Request) int64 {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
+	}
+	if c, ok := ClientFromContext(r.Context()); ok && c.IP != "" {
+		host = c.IP
 	}
 	h := fnv.New64a()
 	h.Write([]byte(host))
@@ -311,7 +315,7 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		notImplemented(w)
 		return
 	}
-	if ok, wait := s.inviteAccepts.allow(clientKey(r)); !ok {
+	if ok, wait := s.inviteAccepts.allow(rateLimitKey(r)); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again shortly")
 		return

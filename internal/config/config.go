@@ -70,6 +70,65 @@ type DaemonConfig struct {
 	// the OS keychain if available, else $data_dir/master.key), "file", or
 	// "keychain".
 	MasterKey string `yaml:"master_key,omitempty"`
+
+	// BehindProxy says bosund sits behind a TLS-terminating reverse proxy
+	// (Tailscale Serve, Caddy, nginx). It allows a non-loopback listen
+	// address without daemon.tls, and makes bosund honour X-Forwarded-For,
+	// X-Forwarded-Proto and X-Forwarded-Host, but only on connections from
+	// TrustedProxies. Mutually exclusive with tls.enabled.
+	BehindProxy bool `yaml:"behind_proxy,omitempty"`
+	// TrustedProxies lists the proxy addresses (CIDRs or single IPs) whose
+	// X-Forwarded-* headers are believed. Empty means DefaultTrustedProxies
+	// (loopback and the private ranges), with a startup warning.
+	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
+}
+
+// DefaultTrustedProxies are trusted when daemon.behind_proxy is set without
+// daemon.trusted_proxies: loopback plus the RFC 1918 and IPv6 unique-local
+// ranges.
+var DefaultTrustedProxies = []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}
+
+// ProxyNets parses TrustedProxies (DefaultTrustedProxies when empty). A
+// bare IP is a single-address network. It returns nil when BehindProxy is
+// off: forwarded headers are then never trusted.
+func (d DaemonConfig) ProxyNets() ([]*net.IPNet, error) {
+	if !d.BehindProxy {
+		return nil, nil
+	}
+	list := d.TrustedProxies
+	if len(list) == 0 {
+		list = DefaultTrustedProxies
+	}
+	out := make([]*net.IPNet, 0, len(list))
+	for _, s := range list {
+		n, err := ParseCIDROrIP(s)
+		if err != nil {
+			return nil, fmt.Errorf("daemon.trusted_proxies %q: %w", s, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+// ParseCIDROrIP parses "10.0.0.0/8" or a bare address ("192.168.1.5",
+// "::1") as a network.
+func ParseCIDROrIP(s string) (*net.IPNet, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "/") {
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			return nil, errors.New("not a CIDR or IP address")
+		}
+		return n, nil
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, errors.New("not a CIDR or IP address")
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}, nil
+	}
+	return &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}, nil
 }
 
 // Location returns the time zone named by daemon.timezone (time.Local when
@@ -447,8 +506,19 @@ func (c *Config) Validate() error {
 		if port == "" {
 			add("daemon.listen %q: missing port", c.Daemon.Listen)
 		}
-		if !isLoopback(host) && !c.Daemon.TLS.Enabled {
-			add("daemon.listen %q: non-loopback address requires daemon.tls.enabled", c.Daemon.Listen)
+		if !isLoopback(host) && !c.Daemon.TLS.Enabled && !c.Daemon.BehindProxy {
+			add("daemon.listen %q: non-loopback address requires daemon.tls.enabled (or daemon.behind_proxy behind a TLS-terminating proxy)", c.Daemon.Listen)
+		}
+	}
+	if c.Daemon.BehindProxy && c.Daemon.TLS.Enabled {
+		add("daemon.behind_proxy and daemon.tls.enabled are mutually exclusive: the proxy terminates TLS")
+	}
+	if len(c.Daemon.TrustedProxies) > 0 && !c.Daemon.BehindProxy {
+		add("daemon.trusted_proxies: only used with daemon.behind_proxy: true")
+	}
+	for _, p := range c.Daemon.TrustedProxies {
+		if _, err := ParseCIDROrIP(p); err != nil {
+			add("daemon.trusted_proxies %q: %v", p, err)
 		}
 	}
 	if c.Daemon.DataDir == "" {
@@ -602,6 +672,13 @@ func isLoopback(host string) bool {
 
 // DBPath returns the SQLite database path inside the data dir.
 func (c *Config) DBPath() string { return filepath.Join(c.Daemon.DataDir, "bosun.db") }
+
+// EnvFilePath returns $data_dir/env, the optional KEY=VALUE file bosund
+// loads into its environment at startup (it must be mode 0600).
+func (c *Config) EnvFilePath() string { return filepath.Join(c.Daemon.DataDir, "env") }
+
+// LogDir returns $data_dir/logs, where service installs send bosund output.
+func (c *Config) LogDir() string { return filepath.Join(c.Daemon.DataDir, "logs") }
 
 // CLITokenPath returns the CLI token file path inside the data dir.
 func (c *Config) CLITokenPath() string { return filepath.Join(c.Daemon.DataDir, "cli-token") }

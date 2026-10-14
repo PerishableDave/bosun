@@ -47,6 +47,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.auth.LoginWithLabel(r.Context(), req.Username, req.Password, req.Label)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
+		c, _ := ClientFromContext(r.Context())
+		s.log.WarnContext(r.Context(), "failed login", "client_ip", c.IP, "proxied", c.Proxied)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}

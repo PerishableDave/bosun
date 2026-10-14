@@ -50,24 +50,34 @@ before saving it (`--no-connect` skips that; see [Email](#email)). Use
 `--config <path>` (or `BOSUN_CONFIG`) on every command to keep the config
 elsewhere.
 
-Pick a model in `bosun.yaml`. The default is `anthropic/claude-sonnet-5-5`,
-which reads the key from `ANTHROPIC_API_KEY`; for a local model, set
-`llm.default: ollama/<model>` (Ollama at `http://localhost:11434`). An
-`openai` provider (any OpenAI-compatible endpoint, `base_url` + `api_key_env`)
-is also supported.
+Pick a model in `bosun.yaml`. The default is `anthropic/claude-sonnet-5-5`;
+for a local model, set `llm.default: ollama/<model>` (Ollama at
+`http://localhost:11434`). An `openai` provider (any OpenAI-compatible
+endpoint, `base_url` + `api_key_env`) is also supported.
 
 ```sh
-export ANTHROPIC_API_KEY=...  # if using Anthropic
-./bin/bosund                  # start the daemon (Ctrl-C / SIGTERM to stop)
+./bin/bosund                  # start the daemon (Ctrl-C / SIGTERM to stop), or `bosun service install`
 ```
 
 In another terminal:
 
 ```sh
-./bin/bosun login                 # stores a session token in <data_dir>/cli-token
-./bin/bosun tools                 # what the assistant can do, and your policy for each
-./bin/bosun chat "hello"          # one turn; `bosun chat` alone opens a session
+./bin/bosun login                          # stores a session token in <data_dir>/cli-token
+./bin/bosun credentials set llm anthropic  # paste the API key at the hidden prompt (admin; stored encrypted)
+./bin/bosun doctor                         # checks everything, including that the key works
+./bin/bosun tools                          # what the assistant can do, and your policy for each
+./bin/bosun chat "hello"                   # one turn; `bosun chat` alone opens a session
 ```
+
+**LLM API keys.** Each provider's key is looked up per request, in order: the
+shared vault credential `llm/<provider>` (`bosun credentials set llm
+<provider>`, admin only, encrypted like every other credential), then the
+environment variable named by the provider's `api_key_env` (the default config
+uses `ANTHROPIC_API_KEY`), else none. A key stored or rotated in the vault takes
+effect within 30 seconds, without a restart. The environment variable remains
+an alternative (`export ANTHROPIC_API_KEY=...` before starting `bosund`, or a
+line in `<data_dir>/env` for a service); `bosun doctor` shows where each
+provider's key comes from.
 
 ### Web UI
 
@@ -537,7 +547,8 @@ integrations `--shared` is implied (and said so); `--shared` on a per-user
 integration is an error. `--field key=value` adds non-secret extra values and
 `--expires` an RFC 3339 expiry. The kinds an integration accepts are the ones it
 declares; for MCP, the `credential:` value of a server (`bearer` or
-`bearer:<suffix>`). Every change is audited without the secret.
+`bearer:<suffix>`); for `llm`, a configured provider name (`anthropic`,
+`openai`, ...). Every change is audited without the secret.
 
 **Master key.** Credentials are encrypted (AES-256-GCM) under a master key
 chosen by `daemon.master_key` in `bosun.yaml`:
@@ -709,6 +720,113 @@ The pin accepts exactly that certificate and nothing else; there is no
 the self-signed certificate; compare the fingerprint in the certificate viewer
 before accepting it. On the daemon's own machine the CLI trusts
 `daemon.tls.cert_file` automatically.
+
+### Behind a reverse proxy (Tailscale Serve, Caddy)
+
+Instead of LAN mode's self-signed certificate, you can put `bosund` behind a
+proxy that terminates TLS and keep it on plain HTTP locally:
+
+```yaml
+daemon:
+  listen: 127.0.0.1:7777       # the proxy runs on the same machine
+  behind_proxy: true           # allows a non-loopback listen without tls; never with tls.enabled
+  trusted_proxies: [127.0.0.1] # CIDRs or IPs whose X-Forwarded-* headers are believed
+```
+
+With `behind_proxy`, `X-Forwarded-For`, `X-Forwarded-Proto` and
+`X-Forwarded-Host` are used (for the client address in logs, and for the OAuth
+redirect URL `bosun connect` registers) **only** on connections from
+`trusted_proxies`; from anyone else, and whenever `behind_proxy` is off, they
+are ignored. Without `trusted_proxies`, loopback and the private ranges are
+trusted and `bosund` warns at startup. `bosun doctor` flags forwarded headers
+arriving from untrusted addresses and a non-loopback listen behind a proxy.
+
+Tailscale Serve (HTTPS on your tailnet, with a real certificate):
+
+```sh
+tailscale serve --bg --https=443 http://127.0.0.1:7777
+bosun --server https://<machine>.<tailnet>.ts.net login
+```
+
+Caddy (`Caddyfile`; Caddy sets `X-Forwarded-*` itself):
+
+```
+bosun.example.com {
+	reverse_proxy 127.0.0.1:7777
+}
+```
+
+Server-Sent Events (chat streaming) need the proxy not to buffer responses;
+both of these stream by default. See [docs/DEPLOY.md](docs/DEPLOY.md) for
+packaged installs.
+
+### Running as a service
+
+`bosun service` keeps `bosund` running in the background and starts it at login:
+
+```sh
+bosun service install    # macOS: ~/Library/LaunchAgents/dev.bosun.bosund.plist (launchd user agent)
+                         # Linux: ~/.config/systemd/user/bosund.service (systemd --user)
+bosun service status     # running/pid, plus the daemon's health and version
+bosun service logs       # follows <data_dir>/logs/bosund.log (macOS) or journalctl --user -u bosund
+bosun service restart    # e.g. after editing bosun.yaml
+bosun service stop | start | uninstall
+```
+
+`install` finds `bosund` next to `bosun` (or on `$PATH`; `--bosund` overrides)
+and runs it with the absolute `--config` path. On macOS the agent has
+`RunAtLoad` and `KeepAlive`, and logs to `<data_dir>/logs/bosund.log`. On
+Linux the user unit uses `Restart=on-failure`; run `sudo loginctl
+enable-linger $USER` once so it keeps running after you log out and starts at
+boot. `--system` writes `/etc/systemd/system/bosund.service` running as a
+dedicated `bosun` user instead (run it with sudo; `bosun` prints the
+`useradd` command and never runs sudo itself); `--print` shows the unit
+without installing it.
+
+**Secrets never go in unit files.** `bosund` reads `<data_dir>/env` at
+startup: optional `KEY=VALUE` lines (blank lines and `#` comments allowed)
+added to its environment, without overriding variables already set. The file
+must be mode 0600 and owned by the user running `bosund`, or the daemon
+refuses to start. Prefer the vault for LLM keys (`bosun credentials set llm
+anthropic`); use `env` for the rest (`api_key_env`, `client_secret_env`, a
+Telegram `token_env`).
+
+### Health checks, backups and versions
+
+```sh
+bosun doctor             # ok / warn / fail per check; exits non-zero on any failure
+bosun version            # CLI and daemon versions
+```
+
+`bosun doctor` checks that the config loads, the data dir is 0700, the vault
+master key is readable, the daemon answers (and runs the same version), each
+LLM provider's key source and a cheap reachability probe (Anthropic and
+OpenAI list models; Ollama `/api/tags`), every integration's and channel's
+status, the TLS certificate's expiry and fingerprint, the routine scheduler,
+free disk space, and the reverse-proxy settings. Logged in as an admin, the
+daemon runs its side (`GET /v1/doctor`), so it also works against a remote
+daemon; with the daemon down, the local checks still run.
+
+```sh
+bosun backup --out bosun-backup.tar.gz    # safe while bosund runs
+bosun restore bosun-backup.tar.gz         # stop bosund first
+```
+
+A backup (mode 0600) holds `bosun.yaml`, a consistent snapshot of the database
+(`VACUUM INTO`, not a copy of the live WAL files), and the data dir's files:
+`master.key` when the vault key is file-based, `env`, `integrations/` state
+and `tls/`. The CLI session token and logs are left out. **If the master key is
+in the OS keychain, it is not included** (you get a warning): credentials in
+the backup then decrypt only where the keychain holds the same key.
+`--include-keychain-key` exports it into the archive; anyone holding that
+archive can read every stored credential, so keep it like a password.
+
+`restore` reads the archive's manifest first and refuses a database newer than
+the binary's migrations (upgrade bosun first). It refuses to run while the
+daemon answers, and refuses a non-empty data dir or an existing config unless
+`--force`, which moves them aside (`<dir>.before-restore-<time>`) rather than
+deleting them. `--data-dir` restores somewhere else and rewrites the config to
+match. Log in again afterwards.
 
 ### Audit log
 
