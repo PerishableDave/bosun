@@ -10,10 +10,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/perishabledave/bosun/internal/config"
+	"github.com/perishabledave/bosun/internal/envfile"
 	"github.com/perishabledave/bosun/internal/store"
 )
 
@@ -47,6 +50,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("%w (run `bosun setup` to create one)", err)
 	}
+	if err := startupChecks(cfg, log); err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -61,6 +67,32 @@ func run() error {
 		return fmt.Errorf("listen %s: %w", cfg.Daemon.Listen, err)
 	}
 	return d.Serve(ctx, ln)
+}
+
+// startupChecks loads $data_dir/env into the environment (so service
+// definitions never hold secrets) and warns about risky proxy settings.
+func startupChecks(cfg *config.Config, log *slog.Logger) error {
+	set, err := envfile.Load(cfg.EnvFilePath())
+	if err != nil {
+		return err
+	}
+	if len(set) > 0 {
+		sort.Strings(set)
+		log.Info("loaded environment file", "file", cfg.EnvFilePath(), "variables", strings.Join(set, ","))
+	}
+	if cfg.Daemon.BehindProxy {
+		if len(cfg.Daemon.TrustedProxies) == 0 {
+			log.Warn("daemon.behind_proxy is set without daemon.trusted_proxies: X-Forwarded-* headers are trusted from every loopback and private address; list your proxy's address",
+				"default", strings.Join(config.DefaultTrustedProxies, ","))
+		}
+		if host, _, err := net.SplitHostPort(cfg.Daemon.Listen); err == nil {
+			if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+				log.Warn("daemon.behind_proxy with a non-loopback listen address serves plain HTTP to the network; listen on 127.0.0.1 if the proxy runs on this host",
+					"listen", cfg.Daemon.Listen)
+			}
+		}
+	}
+	return nil
 }
 
 // ensureDataDir creates the data dir with 0700 and warns if it is accessible

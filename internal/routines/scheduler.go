@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/perishabledave/bosun/internal/api/events"
@@ -66,7 +67,12 @@ type Scheduler struct {
 	stop   chan struct{}  // closed by Close; ends the Run loop
 	wg     sync.WaitGroup // launched runs
 	loopWG sync.WaitGroup // the Run loop
+
+	looping atomic.Bool // the Run loop is active
 }
+
+// Running reports whether the cron loop (Run) is active.
+func (s *Scheduler) Running() bool { return s.looping.Load() }
 
 // New returns a Scheduler. Call Run to start the cron loop and Close to
 // stop.
@@ -97,8 +103,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 		return
 	}
 	s.loopWG.Add(1)
+	s.looping.Store(true)
 	s.mu.Unlock()
 	defer s.loopWG.Done()
+	defer s.looping.Store(false)
 	if _, err := s.RunDue(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ErrClosed) {
 		s.log.Error("routines: check due routines", "err", err)
 	}

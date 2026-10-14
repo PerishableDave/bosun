@@ -120,7 +120,13 @@ type Manager struct {
 
 	flMu    sync.Mutex
 	flights map[string]*flight
+	flWG    sync.WaitGroup // detached refreshes (see Wait)
 }
+
+// Wait blocks until every in-flight token refresh (which runs detached
+// from its caller and writes the vault) has finished. The daemon calls it
+// before closing the store.
+func (m *Manager) Wait() { m.flWG.Wait() }
 
 // New returns a Manager.
 func New(o Options) (*Manager, error) {
@@ -769,7 +775,9 @@ func (m *Manager) refresh(ctx context.Context, userID int64, provider string) (i
 	if !ok {
 		f = &flight{done: make(chan struct{})}
 		m.flights[key] = f
+		m.flWG.Add(1)
 		go func() {
+			defer m.flWG.Done()
 			// Detached from the first caller so its cancellation does not
 			// fail everyone else waiting on the same refresh.
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

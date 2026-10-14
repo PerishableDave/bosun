@@ -26,7 +26,11 @@ const (
 
 // Config configures a Provider.
 type Config struct {
-	APIKey     string       // sent as x-api-key; never logged
+	APIKey string // sent as x-api-key; never logged
+	// KeyFunc, if set, is called for every request instead of using
+	// APIKey, so a key changed in the vault takes effect without a restart.
+	// An error fails the request; "" sends no key.
+	KeyFunc    func(ctx context.Context) (string, error)
 	BaseURL    string       // default https://api.anthropic.com
 	HTTPClient *http.Client // optional; default has no overall timeout (ctx governs)
 }
@@ -34,6 +38,7 @@ type Config struct {
 // Provider is the Anthropic llm.Provider.
 type Provider struct {
 	apiKey  string
+	keyFunc func(ctx context.Context) (string, error)
 	baseURL string
 	client  *http.Client
 }
@@ -50,7 +55,7 @@ func New(cfg Config) *Provider {
 	if c == nil {
 		c = &http.Client{}
 	}
-	return &Provider{apiKey: cfg.APIKey, baseURL: base, client: c}
+	return &Provider{apiKey: cfg.APIKey, keyFunc: cfg.KeyFunc, baseURL: base, client: c}
 }
 
 // Name implements llm.Provider.
@@ -186,8 +191,14 @@ func (p *Provider) do(ctx context.Context, body []byte, stream bool) (*http.Resp
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("anthropic-version", apiVersion)
-	if p.apiKey != "" {
-		hreq.Header.Set("x-api-key", p.apiKey)
+	key := p.apiKey
+	if p.keyFunc != nil {
+		if key, err = p.keyFunc(ctx); err != nil {
+			return nil, fmt.Errorf("anthropic: API key: %w", err)
+		}
+	}
+	if key != "" {
+		hreq.Header.Set("x-api-key", key)
 	}
 	if stream {
 		hreq.Header.Set("Accept", "text/event-stream")

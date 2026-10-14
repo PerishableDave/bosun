@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/perishabledave/bosun/internal/api/events"
 	"github.com/perishabledave/bosun/internal/audit"
 	"github.com/perishabledave/bosun/internal/auth"
+	"github.com/perishabledave/bosun/internal/doctor"
 	"github.com/perishabledave/bosun/internal/hooks"
 	"github.com/perishabledave/bosun/internal/integration"
 	"github.com/perishabledave/bosun/internal/policy"
@@ -79,6 +81,16 @@ type Options struct {
 	// Channels manages chat-app links (usually *channels.Manager) behind
 	// /v1/channels. Nil means no channel is enabled.
 	Channels Channels
+
+	// TrustedProxies are the networks whose X-Forwarded-For/-Proto/-Host
+	// headers are believed (config daemon.behind_proxy). Nil means never.
+	TrustedProxies []*net.IPNet
+	// ProxyStats, if set, counts requests whose forwarded headers were
+	// ignored (reported by GET /v1/doctor).
+	ProxyStats *ProxyStats
+	// Doctor runs the daemon-side health checks for GET /v1/doctor (admin
+	// only). Nil answers 501.
+	Doctor func(ctx context.Context) []doctor.Check
 }
 
 // Server holds API dependencies.
@@ -113,6 +125,10 @@ type Server struct {
 	turns   map[string]bool // conversations with a turn in progress
 
 	credTests *rateLimiter // POST /v1/integrations/{name}/test, per user
+
+	trustedProxies []*net.IPNet
+	proxyStats     *ProxyStats
+	doctor         func(ctx context.Context) []doctor.Check
 }
 
 // New returns a Server. Auth and Bus are required.
@@ -128,6 +144,7 @@ func New(o Options) (*Server, error) {
 	s.oauth = o.OAuth
 	s.channels = o.Channels
 	s.credTests = newRateLimiter(CredentialTestsPerMinute, time.Minute)
+	s.trustedProxies, s.proxyStats, s.doctor = o.TrustedProxies, o.ProxyStats, o.Doctor
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -189,6 +206,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/channels", authed(s.handleListChannels))
 	mux.Handle("POST /v1/channels/{channel}/link", authed(s.handleChannelLinkCode))
 	mux.Handle("DELETE /v1/channels/{channel}/{external_id}", authed(s.handleDeleteChannelLink))
+	mux.Handle("GET /v1/doctor", authed(s.handleDoctor))
 
 	if s.webUI != nil {
 		mux.Handle("/", s.webUI)
@@ -200,7 +218,7 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 		})
 	}
-	return s.recoverer(s.securityHeaders(mux))
+	return s.recoverer(s.clientInfo(s.securityHeaders(mux)))
 }
 
 // --- context ---

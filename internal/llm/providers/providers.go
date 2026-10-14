@@ -3,7 +3,6 @@ package providers
 
 import (
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/perishabledave/bosun/internal/config"
@@ -13,11 +12,29 @@ import (
 	"github.com/perishabledave/bosun/internal/llm/openai"
 )
 
+// Option configures FromConfig.
+type Option func(*options)
+
+type options struct{ keys *Keys }
+
+// WithKeys resolves API keys with k (vault, then environment) instead of
+// the environment only.
+func WithKeys(k *Keys) Option { return func(o *options) { o.keys = k } }
+
 // FromConfig registers every provider listed in cfg.LLM.Providers. Supported
-// keys are "anthropic", "openai", and "ollama". An api_key_env that names an
-// unset variable yields an empty key (the provider's request will then fail
-// with the server's auth error); the key itself is never logged.
-func FromConfig(cfg *config.Config) (*llm.Registry, error) {
+// keys are "anthropic", "openai", and "ollama". API keys are looked up per
+// request (see Keys): the vault's shared llm/<provider> credential when
+// WithKeys is given, else the api_key_env variable. A missing key sends no
+// key (the provider's request then fails with the server's auth error); the
+// key itself is never logged.
+func FromConfig(cfg *config.Config, opts ...Option) (*llm.Registry, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.keys == nil {
+		o.keys = NewKeys(cfg, nil)
+	}
 	reg := llm.NewRegistry()
 	names := make([]string, 0, len(cfg.LLM.Providers))
 	for n := range cfg.LLM.Providers {
@@ -26,20 +43,17 @@ func FromConfig(cfg *config.Config) (*llm.Registry, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		pc := cfg.LLM.Providers[name]
-		key := ""
-		if pc.APIKeyEnv != "" {
-			key = os.Getenv(pc.APIKeyEnv)
-		}
+		keyFunc := o.keys.KeyFunc(name)
 		var p llm.Provider
 		switch name {
 		case "anthropic":
-			p = anthropic.New(anthropic.Config{APIKey: key, BaseURL: pc.BaseURL})
+			p = anthropic.New(anthropic.Config{KeyFunc: keyFunc, BaseURL: pc.BaseURL})
 		case "openai":
 			base := pc.BaseURL
 			if base == "" {
 				base = "https://api.openai.com/v1"
 			}
-			op, err := openai.New(openai.Config{Name: "openai", BaseURL: base, APIKey: key})
+			op, err := openai.New(openai.Config{Name: "openai", BaseURL: base, KeyFunc: keyFunc})
 			if err != nil {
 				return nil, fmt.Errorf("llm provider %q: %w", name, err)
 			}
