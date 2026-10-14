@@ -41,16 +41,23 @@ func (p *prompter) line(label, def string) (string, error) {
 	return s, nil
 }
 
-// password prompts for a secret without echo when possible.
+// password prompts for a secret. On a terminal each typed character is shown
+// as '*' (so the user can see input arriving) and the secret itself is never
+// echoed; otherwise it is read as a plain line (for scripting).
 func (p *prompter) password(label string) (string, error) {
 	fmt.Fprintf(p.out, "%s: ", label)
 	if f, ok := p.in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		b, err := term.ReadPassword(int(f.Fd()))
+		state, err := term.MakeRaw(int(f.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", label, err)
+		}
+		s, err := readMasked(f, p.out)
+		_ = term.Restore(int(f.Fd()), state)
 		fmt.Fprintln(p.out)
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", label, err)
 		}
-		return string(b), nil
+		return s, nil
 	}
 	s, err := p.br.ReadString('\n')
 	if err != nil && !(errors.Is(err, io.EOF) && s != "") {
