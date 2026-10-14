@@ -20,7 +20,7 @@ import (
 )
 
 // TestEndToEndNotes runs the notes integration in per-user mode through the
-// daemon: notes live under <dir>/<username>/ and each user sees only theirs.
+// daemon: notes live under <dir>/u<id>/ (legacy <username> folders migrate) and each user sees only theirs.
 func TestEndToEndNotes(t *testing.T) {
 	dir := t.TempDir()
 	notesDir := filepath.Join(dir, "Notes")
@@ -98,7 +98,14 @@ integrations:
 	if tr := lastToolResult(t, reqs[len(reqs)-1]); tr.IsError || strings.Contains(tr.Content, "plan.md") {
 		t.Errorf("bob list = %+v", tr)
 	}
-	if _, err := os.Stat(filepath.Join(notesDir, "bob")); err != nil {
-		t.Errorf("bob's folder not created by username: %v", err)
+	if _, err := os.Stat(filepath.Join(notesDir, fmt.Sprintf("u%d", h.bob.ID))); err != nil {
+		t.Errorf("bob's folder not created by user ID: %v", err)
+	}
+	// Alice's legacy <username> folder was migrated to u<id>.
+	if _, err := os.Stat(filepath.Join(notesDir, fmt.Sprintf("u%d", h.alice.ID), "plan.md")); err != nil {
+		t.Errorf("alice's legacy folder not migrated: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(notesDir, "alice")); !os.IsNotExist(err) {
+		t.Errorf("legacy alice folder still present: %v", err)
 	}
 }
