@@ -1,6 +1,7 @@
 // Package notes is the first-party notes integration: Markdown and text
 // files in a directory, either shared by the household or split per user
-// (<dir>/<username>/).
+// (<dir>/u<id>/, keyed by numeric user ID so a deleted user's
+// notes are never inherited by a later user with the same name).
 //
 // Path safety: every path is relative to the notes root; absolute paths, ".."
 // escapes, hidden components (".git", ".obsidian"), and symlinks resolving
@@ -22,12 +23,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/perishabledave/bosun/internal/integration"
@@ -38,7 +41,7 @@ type Settings struct {
 	// Dir is the notes root. Empty means the integration's private data
 	// directory (<data_dir>/integrations/notes).
 	Dir string `json:"dir,omitempty"`
-	// PerUser gives each user their own subdirectory <dir>/<username>/
+	// PerUser gives each user their own subdirectory <dir>/u<id>/
 	// (default true). false shares one directory with every user.
 	PerUser *bool `json:"per_user,omitempty"`
 }
@@ -63,7 +66,10 @@ const (
 
 var allowedExt = map[string]bool{".md": true, ".markdown": true, ".txt": true}
 
-// UserDirFunc returns the directory name for a user's notes (per-user mode).
+// UserDirFunc returns the legacy directory name (the username) for a user's
+// notes. Per-user folders are now <dir>/u<id>/; the name is used only to
+// migrate an existing <dir>/<name>/ folder the first time the user's notes
+// are touched.
 type UserDirFunc func(ctx context.Context, userID int64) (string, error)
 
 // Integration implements integration.Integration.
@@ -72,17 +78,17 @@ type Integration struct {
 	perUser bool
 	userDir UserDirFunc
 	inited  bool
+	migMu   sync.Mutex
 }
 
 // New returns an uninitialised notes integration. In per-user mode users'
-// directories are named by their numeric user ID unless SetUserDirFunc
-// supplies a name (the daemon supplies the username).
+// directories are named u<id> after their numeric user ID.
 func New() *Integration { return &Integration{perUser: true} }
 
 var _ integration.Integration = (*Integration)(nil)
 
-// SetUserDirFunc sets how per-user directory names are derived (call before
-// Init). Names must be a single safe path component.
+// SetUserDirFunc sets the legacy-name lookup used to migrate pre-existing
+// <dir>/<username>/ folders to <dir>/u<id>/ (call before Init).
 func (n *Integration) SetUserDirFunc(f UserDirFunc) { n.userDir = f }
 
 // Manifest implements integration.Integration. The scope follows the
@@ -100,7 +106,7 @@ func (n *Integration) Manifest() integration.Manifest {
 		Capabilities: []integration.Capability{capRead, capWrite, capDelete},
 		ConfigSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{` +
 			`"dir":{"type":"string","description":"notes directory"},` +
-			`"per_user":{"type":"boolean","default":true,"description":"each user's notes live in <dir>/<username>/"}}}`),
+			`"per_user":{"type":"boolean","default":true,"description":"each user's notes live in <dir>/u<id>/"}}}`),
 	}
 }
 
@@ -220,17 +226,9 @@ func (n *Integration) userRoot(ctx context.Context) (string, error) {
 	if !n.perUser {
 		return n.root, nil
 	}
-	name := strconv.FormatInt(uid, 10)
-	if n.userDir != nil {
-		var err error
-		if name, err = n.userDir(ctx, uid); err != nil {
-			return "", fmt.Errorf("notes: resolve user directory: %w", err)
-		}
-	}
-	if !safeDirName.MatchString(name) || strings.Contains(name, "..") {
-		return "", fmt.Errorf("notes: unsafe user directory name %q", name)
-	}
+	name := "u" + strconv.FormatInt(uid, 10)
 	dir := filepath.Join(n.root, name)
+	n.migrateLegacy(ctx, uid, dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("notes: create user directory: %w", err)
 	}
@@ -242,6 +240,37 @@ func (n *Integration) userRoot(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("notes: user directory %q escapes the notes root", name)
 	}
 	return real, nil
+}
+
+var idDirName = regexp.MustCompile(`^u[0-9]+$`)
+
+// migrateLegacy renames an old <root>/<username>/ folder to dir (<root>/u<id>)
+// the first time the user's notes are touched. It never overwrites an
+// existing dir and is best-effort: failures are logged and the user simply
+// starts with an empty folder.
+func (n *Integration) migrateLegacy(ctx context.Context, uid int64, dir string) {
+	if n.userDir == nil {
+		return
+	}
+	n.migMu.Lock()
+	defer n.migMu.Unlock()
+	if _, err := os.Lstat(dir); err == nil {
+		return // already migrated or created
+	}
+	old, err := n.userDir(ctx, uid)
+	if err != nil || !safeDirName.MatchString(old) || strings.Contains(old, "..") || idDirName.MatchString(old) {
+		return
+	}
+	oldPath := filepath.Join(n.root, old)
+	fi, err := os.Lstat(oldPath)
+	if err != nil || !fi.IsDir() { // missing, or a symlink/file: leave alone
+		return
+	}
+	if err := os.Rename(oldPath, dir); err != nil {
+		slog.Warn("notes: migrating per-user folder failed", "from", oldPath, "to", dir, "err", err)
+		return
+	}
+	slog.Info("notes: migrated per-user folder to its user ID", "from", oldPath, "to", dir, "user_id", uid)
 }
 
 // within reports whether p is root or inside it (both cleaned, absolute).

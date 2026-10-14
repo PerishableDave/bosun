@@ -123,12 +123,17 @@ integrations:
   notes:
     enabled: true
     dir: ~/Notes        # default: <data_dir>/integrations/notes
-    per_user: true      # default: each user's notes live in ~/Notes/<username>/
+    per_user: true      # default: each user's notes live in ~/Notes/u<user id>/
 ```
 
 - Capabilities: `notes.read` (list/search/read; read risk), `notes.write`
   (write/append; write risk, asks by default), `notes.delete` (destructive).
-- With `per_user: true` users never see each other's notes. With
+- With `per_user: true` users never see each other's notes. Folders are keyed
+  by numeric user ID (`u1`, `u2`, ...), not username, so a new account that
+  reuses a deleted user's name cannot inherit their notes. A pre-existing
+  `<dir>/<username>/` folder is renamed to `<dir>/u<id>/` the first time that
+  user's notes are used (logged). Removing a user never deletes their notes on
+  disk; the folder stays as an orphan you can archive or delete by hand. With
   `per_user: false` everyone shares `dir`, and note contents are treated as
   untrusted data (another household member could have written instructions
   into a note).

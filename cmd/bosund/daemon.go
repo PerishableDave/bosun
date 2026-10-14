@@ -275,7 +275,7 @@ func (d *daemon) enabledIntegrations(dp deps) []integration.Integration {
 		}
 		in := mk(d.log)
 		if n, ok := in.(*notes.Integration); ok {
-			n.SetUserDirFunc(d.username) // per-user notes live in <dir>/<username>/
+			n.SetUserDirFunc(d.username) // legacy <dir>/<username>/ folders migrate to <dir>/u<id>/
 		}
 		if c, ok := in.(*calendar.Integration); ok {
 			if loc, err := d.cfg.Daemon.Location(); err == nil { // validated at config load

@@ -100,7 +100,7 @@ func TestInitErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustCall(t, n, 1, "notes.write", `{"path":"a.md","content":"x"}`)
-	if _, err := os.Stat(filepath.Join(dd, "1", "a.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dd, "u1", "a.md")); err != nil {
 		t.Error(err)
 	}
 }
@@ -111,7 +111,7 @@ func TestWriteReadListAppendDelete(t *testing.T) {
 	if !strings.Contains(r.Content, "Created journal/2026/today.md") || r.Untrusted {
 		t.Errorf("write = %+v", r)
 	}
-	fi, err := os.Stat(filepath.Join(dir, "1", "journal", "2026", "today.md"))
+	fi, err := os.Stat(filepath.Join(dir, "u1", "journal", "2026", "today.md"))
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("file: %v %v", fi, err)
 	}
@@ -129,13 +129,13 @@ func TestWriteReadListAppendDelete(t *testing.T) {
 		t.Errorf("append-created = %q", r.Content)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "1", "image.png"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "u1", "image.png"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "1", ".obsidian"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "u1", ".obsidian"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "1", ".obsidian", "x.md"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "u1", ".obsidian", "x.md"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r = mustCall(t, n, 1, "notes.list", `{}`)
@@ -162,7 +162,7 @@ func TestWriteReadListAppendDelete(t *testing.T) {
 func TestReadCap(t *testing.T) {
 	n, dir := newNotes(t, "")
 	mustCall(t, n, 1, "notes.write", `{"path":"big.md","content":"x"}`)
-	if err := os.WriteFile(filepath.Join(dir, "1", "big.md"), []byte(strings.Repeat("a", MaxReadBytes+10)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "u1", "big.md"), []byte(strings.Repeat("a", MaxReadBytes+10)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r := mustCall(t, n, 1, "notes.read", `{"path":"big.md"}`)
@@ -213,7 +213,7 @@ func TestPathSafety(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "secret.md"), []byte("SECRET"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	userDir := filepath.Join(dir, "1")
+	userDir := filepath.Join(dir, "u1")
 	// Symlinks pointing outside the root.
 	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(userDir, "link.md")); err != nil {
 		t.Fatal(err)
@@ -285,13 +285,13 @@ func TestPathSafety(t *testing.T) {
 }
 
 func TestPerUserIsolation(t *testing.T) {
-	names := map[int64]string{1: "alice", 2: "bob", 3: "../evil"}
+	names := map[int64]string{1: "alice", 2: "bob"}
 	n, dir := newNotes(t, "", func(n *Integration) {
 		n.SetUserDirFunc(func(_ context.Context, id int64) (string, error) { return names[id], nil })
 	})
 	mustCall(t, n, 1, "notes.write", `{"path":"diary.md","content":"alice private"}`)
 	mustCall(t, n, 2, "notes.write", `{"path":"todo.md","content":"bob stuff"}`)
-	if _, err := os.Stat(filepath.Join(dir, "alice", "diary.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "u1", "diary.md")); err != nil {
 		t.Error(err)
 	}
 	if r := mustCall(t, n, 2, "notes.list", `{}`); len(r.Data.([]Entry)) != 1 || r.Data.([]Entry)[0].Path != "todo.md" {
@@ -300,23 +300,50 @@ func TestPerUserIsolation(t *testing.T) {
 	if r := mustCall(t, n, 2, "notes.search", `{"query":"private"}`); len(r.Data.([]Match)) != 0 {
 		t.Errorf("bob found alice's note: %s", r.Content)
 	}
-	for _, args := range []string{`{"path":"../alice/diary.md"}`, `{"path":"diary.md"}`} {
+	for _, args := range []string{`{"path":"../u1/diary.md"}`, `{"path":"diary.md"}`} {
 		if _, err := call(t, n, 2, "notes.read", args); err == nil {
 			t.Errorf("bob read %s", args)
 		}
-	}
-	if _, err := call(t, n, 3, "notes.list", `{}`); err == nil || !strings.Contains(err.Error(), "unsafe") {
-		t.Errorf("unsafe user dir name: %v", err)
 	}
 	if _, err := n.tool(t, "notes.list").Handler(context.Background(), json.RawMessage(`{}`)); err == nil {
 		t.Error("call without a user succeeded")
 	}
 
-	// Without a name function, numeric IDs are used.
+	// Folders are keyed by user ID, not name.
 	n2, dir2 := newNotes(t, "")
 	mustCall(t, n2, 42, "notes.write", `{"path":"x.md","content":"x"}`)
-	if _, err := os.Stat(filepath.Join(dir2, "42", "x.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir2, "u42", "x.md")); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestLegacyFolderMigration(t *testing.T) {
+	names := map[int64]string{1: "alice", 2: "../evil", 3: "u1"}
+	n, dir := newNotes(t, "", func(n *Integration) {
+		n.SetUserDirFunc(func(_ context.Context, id int64) (string, error) { return names[id], nil })
+	})
+	if err := os.MkdirAll(filepath.Join(dir, "alice"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "alice", "old.md"), []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := mustCall(t, n, 1, "notes.read", `{"path":"old.md"}`); r.Content != "kept" {
+		t.Errorf("migrated note = %q", r.Content)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "alice")); !os.IsNotExist(err) {
+		t.Errorf("legacy folder still present: %v", err)
+	}
+	// A new account reusing the name gets a fresh folder under its own ID.
+	names[9] = "alice"
+	if r := mustCall(t, n, 9, "notes.list", `{}`); len(r.Data.([]Entry)) != 0 {
+		t.Errorf("new alice inherited notes: %s", r.Content)
+	}
+	// Unsafe names and names that look like ID folders are never migrated.
+	mustCall(t, n, 2, "notes.list", `{}`)
+	mustCall(t, n, 3, "notes.list", `{}`)
+	if _, err := os.Stat(filepath.Join(dir, "u1", "old.md")); err != nil {
+		t.Errorf("u1 clobbered: %v", err)
 	}
 }
 

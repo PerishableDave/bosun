@@ -210,19 +210,26 @@ channels:
 	alice := h.login("alice", "alice-password")
 
 	// Without a token the channel reports itself down.
+	// (The status moves from "not started" asynchronously after Start, so poll.)
 	var il api.IntegrationListResponse
-	h.do("GET", "/v1/integrations", alice, nil, &il)
+	var last api.IntegrationResponse
 	found := false
-	for _, in := range il.Integrations {
-		if in.Name == "channels" {
-			found = true
-			if in.Status != integration.StatusDown || !strings.Contains(in.Message, "no bot token") {
-				t.Fatalf("channels status = %+v", in)
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		il = api.IntegrationListResponse{}
+		h.do("GET", "/v1/integrations", alice, nil, &il)
+		found = false
+		for _, in := range il.Integrations {
+			if in.Name == "channels" {
+				found = true
+				last = in
 			}
 		}
-	}
-	if !found {
-		t.Fatalf("channels integration not listed: %+v", il)
+		if found && last.Status == integration.StatusDown && strings.Contains(last.Message, "no bot token") {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatalf("channels status = %+v (listed: %v)", last, found)
+		}
 	}
 	if c := h.do("PUT", "/v1/credentials/channels/telegram_bot_token?scope=shared", alice, api.PutCredentialRequest{Secret: token}, nil); c != 200 {
 		t.Fatalf("PUT token = %d", c)
