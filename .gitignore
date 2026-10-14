@@ -30,5 +30,3 @@ master.key
 .idea/
 .vscode/
 
-# Claude Code session worktrees
-/.claude/
