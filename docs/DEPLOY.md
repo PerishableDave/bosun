@@ -4,15 +4,13 @@ Bosun is two static binaries: `bosund` (the daemon: agent loop, HTTP API, web
 UI, scheduler) and `bosun` (the CLI). There are two supported ways to run it:
 
 - **[On your own computer](#a-personal-machine)** (macOS or Linux): install
-  the binaries, run `bosun setup`, start the background service. Bosun
+  the binaries, run `bosun setup`, store your model key, run
+  `bosun service install`, check with `bosun doctor`. Bosun
   listens on `127.0.0.1` only.
 - **[On a homelab server](#b-homelab-server-docker-compose)** for a
   household: Docker Compose, optionally with a local LLM (Ollama) and a
   private search engine (SearXNG), reached from your devices through
   Tailscale or a reverse proxy.
-
-Commands marked *(coming in this release)* are being finished and are not in
-every build yet; each one has a manual fallback next to it.
 
 ---
 
@@ -51,18 +49,45 @@ bosun setup
 This writes `~/.bosun/bosun.yaml`, creates the data directory `~/.bosun`
 (mode 0700) and the database, asks for your admin username and password, and
 offers to connect your email and calendar. Choose a model in
-`~/.bosun/bosun.yaml` (`llm.default`; Anthropic with `ANTHROPIC_API_KEY`, a
-local Ollama model, or any OpenAI-compatible endpoint). See the
-[README](../README.md#quick-start) for every option.
+`~/.bosun/bosun.yaml` (`llm.default`; Anthropic, a local Ollama model, or any
+OpenAI-compatible endpoint). See the [README](../README.md#quick-start) for
+every option.
 
-### 3. Run it in the background
+### 3. Give it a model key
+
+Skip this for a local Ollama model. For a cloud model, either:
+
+- **the vault (recommended).** Once the service is running (next step) and you
+  are logged in, store the key encrypted, shared by all users:
+
+  ```sh
+  bosun login
+  bosun credentials set llm anthropic --shared   # hidden prompt; admin only
+  ```
+
+  It takes effect within 30 seconds, with no restart, and can be rotated the
+  same way. The key is looked up in the vault first, then in the environment.
+- **the env file.** Put `ANTHROPIC_API_KEY=sk-ant-...` in `~/.bosun/env`
+  (`chmod 600`; bosund refuses to start if it is group- or world-readable or
+  not yours). bosund reads it at startup. Use this when you want the key in
+  place before the first start; it is also where other environment secrets
+  (`client_secret_env`, a Telegram `token_env`) go.
+
+Background services do not see variables exported in your shell profile, which
+is why the key goes in the vault or the env file and never in a unit file.
+
+### 4. Run it in the background
 
 ```sh
-bosun service install      # (coming in this release)
+bosun service install
 ```
 
 installs and starts a per-user launchd agent (macOS) or systemd user unit
-(Linux) that runs `bosund` at login.
+(Linux) that runs `bosund` at login. Related commands: `bosun service
+status|logs|restart|stop|start|uninstall`. On Linux run `sudo loginctl
+enable-linger $USER` once so it keeps running after you log out. `--system`
+installs a system unit running as a dedicated `bosun` user; `--print` shows
+the unit without installing it.
 
 With Homebrew you can use Homebrew's service manager instead:
 
@@ -74,19 +99,23 @@ The Homebrew service runs `bosund` with its default config,
 `~/.bosun/bosun.yaml`, which is exactly where `bosun setup` writes it, so run
 `bosun setup` first. Its log is `$(brew --prefix)/var/log/bosun.log`.
 
-Background services do not see variables exported in your shell profile. If
-you use a cloud model, give bosund its API key through the daemon's env file
-`~/.bosun/env` or the credential vault *(coming in this release)*; until
-then, run `bosund` from a terminal where `ANTHROPIC_API_KEY` is set, or use a
-local Ollama model, which needs no key.
-
-Then:
+### 5. Check it
 
 ```sh
-bosun login
+bosun doctor
+```
+
+reports ok / warn / fail for the config, data directory permissions, master
+key, daemon reachability and version, each model provider's key source and
+reachability, integrations and channels, TLS certificate expiry, disk space and
+reverse-proxy settings, and exits non-zero on any failure. Then:
+
+```sh
 bosun chat "what's on my calendar today?"
 open http://127.0.0.1:7777     # the web UI
 ```
+
+(`bosun login` once, if you have not already.)
 
 ### Where files live
 
@@ -98,7 +127,7 @@ open http://127.0.0.1:7777     # the web UI
 | `~/.bosun/tls/` | the self-signed certificate, if you enabled LAN mode |
 | `~/.bosun/cli-token`, `cli-server.json` | the CLI's session token and server/pin |
 | `~/.bosun/integrations/` | integration data (e.g. notes) |
-| `~/.bosun/env` | environment for the daemon *(coming in this release)* |
+| `~/.bosun/env` | `KEY=VALUE` environment for the daemon, read at startup; must be mode 0600 |
 | binaries | `/usr/local/bin` or `~/.local/bin` (install.sh), `$(brew --prefix)/bin` (Homebrew) |
 
 Everything Bosun knows about you is in `~/.bosun`, plus the master key in the
@@ -110,7 +139,7 @@ default) and a keychain is available.
 ```sh
 brew upgrade bosun && brew services restart bosun
 # or: re-run the install script, then restart the service
-#     (bosun service install, or stop and start bosund)
+#     (`bosun service restart`)
 ```
 
 The database schema is migrated automatically when `bosund` starts. Your
@@ -119,15 +148,18 @@ The database schema is migrated automatically when `bosund` starts. Your
 ### Back up
 
 ```sh
-bosun backup               # (coming in this release)
+bosun backup --out bosun-backup.tar.gz     # safe while bosund runs
+bosun restore bosun-backup.tar.gz          # stop bosund first (bosun service stop)
 ```
 
-Until then: stop `bosund` (or use `sqlite3 ~/.bosun/bosun.db ".backup
-bosun-backup.db"` while it runs) and copy `~/.bosun`. If the master key is in
-the keychain, the copy alone cannot decrypt stored credentials on another
-machine; keep the keychain (e.g. your normal macOS backup) too. If the key is
-in `master.key`, the backup contains everything needed to read your
-credentials: store it encrypted.
+The archive (mode 0600) holds `bosun.yaml`, a consistent database snapshot, and
+the data directory's `master.key` (if file-based), `env`, `integrations/` and
+`tls/`. If the master key is in the OS keychain it is **not** included (you get
+a warning), so on another machine the backup alone cannot decrypt stored
+credentials; either keep the keychain in your normal machine backup or pass
+`--include-keychain-key`, after which the archive can read every credential:
+store it encrypted. `restore` refuses a non-empty data directory unless
+`--force` (which moves the old one aside, never deletes it).
 
 ---
 
@@ -175,14 +207,21 @@ On first start the container:
    `0.0.0.0:7777` inside the container, `data_dir: /data`, `master_key:
    file`, web UI on, `llm.default: ollama/llama3.1` with Ollama at
    `http://ollama:11434`, Anthropic via `ANTHROPIC_API_KEY`, websearch via
-   `http://searxng:8080`, email, calendar and Telegram enabled), and
+   `http://searxng:8080`, email and calendar enabled, Telegram disabled until
+   you store a bot token), and
 2. generates a self-signed certificate in `/data/tls/`, because bosund
-   requires TLS on non-loopback addresses.
+   requires TLS on non-loopback addresses (`tls.enabled: true` is the default:
+   the safer choice if the port is ever exposed without a proxy).
 
 An existing `/data/bosun.yaml` is never overwritten. Edit it with
 `docker compose exec bosun vi /data/bosun.yaml`, then
 `docker compose restart bosun`. To use Anthropic instead of Ollama, set
-`llm.default: anthropic/claude-sonnet-5-5`.
+`llm.default: anthropic/claude-sonnet-5-5` and provide the key either in
+`.env` (`ANTHROPIC_API_KEY`) or, after step 3, in the vault with
+`docker compose exec bosun bosun credentials set llm anthropic --shared`. To
+enable Telegram, store the bot token the same way (`bosun credentials set
+channels telegram_bot_token --shared`), set `channels.telegram.enabled: true`
+and restart. Run `docker compose exec bosun bosun doctor` to check the setup.
 
 The port is published on the host's **loopback only**
 (`127.0.0.1:7777:7777`): nothing on your network can reach it until you add
@@ -203,7 +242,8 @@ docker compose exec bosun bosun login
 docker compose exec bosun bosun chat "hello"
 ```
 
-or open the web UI (step 4).
+or open the web UI (step 4). `docker compose exec bosun bosun config check
+--config /data/bosun.yaml` validates the file after you edit it.
 
 **Household users.** `bosun setup` creates the first (admin) account. Each
 person should have their own account so that their memory, connected
@@ -233,9 +273,8 @@ tailscale serve --bg https+insecure://127.0.0.1:7777
 ```
 
 Bosun is then at `https://<server>.<tailnet>.ts.net/` for your tailnet only.
-(`https+insecure` because bosund currently serves its own self-signed
-certificate; once it runs with `behind_proxy: true` and TLS off, use
-`tailscale serve --bg 7777`.) A Tailscale sidecar container is sketched at
+(`https+insecure` because bosund serves its own self-signed certificate by
+default; with the `behind_proxy` setup below, use `tailscale serve --bg 7777`.) A Tailscale sidecar container is sketched at
 the bottom of `compose.yml`. Do not use `tailscale funnel`, which publishes
 to the internet.
 
@@ -252,13 +291,18 @@ certificate from the `caddy-data` volume on your devices) and proxies to
 bosund over HTTPS without verifying its self-signed certificate, which is
 acceptable because that hop never leaves the compose network.
 
-**`behind_proxy`** *(coming in this release)*: when bosund supports
-`daemon.behind_proxy`, uncomment `behind_proxy: true` in `/data/bosun.yaml`
-and set `daemon.tls.enabled: false`; bosund then serves plain HTTP inside the
-compose network and trusts the proxy's forwarded headers. Switch the Caddyfile
-to `reverse_proxy bosun:7777` at the same time. Only do this when every
-client reaches Bosun through the proxy: keep the published port on
-`127.0.0.1`.
+**`behind_proxy` (plain HTTP behind the proxy).** The defaults above keep TLS
+on. If you would rather have the proxy terminate TLS alone, edit
+`/data/bosun.yaml`: set `daemon.behind_proxy: true` and
+`daemon.tls.enabled: false` (they are mutually exclusive), optionally
+`daemon.trusted_proxies` (default: loopback and private ranges, which includes
+the compose network), and `docker compose restart bosun`. bosund then serves
+plain HTTP and believes `X-Forwarded-*` headers only from trusted proxies.
+Switch the proxy at the same time: `reverse_proxy bosun:7777` in the Caddyfile
+(drop the `transport http` block), or `tailscale serve --bg 7777`. Only do
+this when every client reaches Bosun through the proxy: keep the published port
+on `127.0.0.1`. `bosun doctor` flags a non-loopback listen behind a proxy and
+forwarded headers from untrusted addresses.
 
 The CLI from another computer (when going through the proxy, the proxy's
 certificate is the one the CLI sees):
@@ -284,7 +328,8 @@ compose), **including `master.key`**, so the backup can decrypt every stored
 credential: keep it encrypted and off the server.
 
 ```sh
-docker compose exec bosun bosun backup     # (coming in this release)
+docker compose exec bosun bosun backup --out /data/backup.tar.gz
+docker compose cp bosun:/data/backup.tar.gz .   # then delete it from the volume
 
 # or a cold copy of the whole volume:
 docker compose stop bosun
@@ -293,7 +338,7 @@ docker run --rm -v bosun_bosun-data:/data:ro -v "$PWD":/backup alpine \
 docker compose start bosun
 ```
 
-Restore by extracting into an empty `bosun_bosun-data` volume (as uid 1000)
+Restore a `bosun backup` archive with `bosun restore` into a fresh volume, or a volume copy by extracting into an empty `bosun_bosun-data` volume (as uid 1000)
 before `docker compose up`.
 
 ### Resource needs
@@ -349,7 +394,8 @@ small, run Ollama on a desktop with a GPU and point
   `/data/master.key` (`master_key: file`), next to the data it protects:
   protect the volume and its backups accordingly.
 - **Secrets stay out of `bosun.yaml`.** API keys come from the environment
-  (`.env` for compose, mode 0600) or the vault; account passwords and tokens
+  (`.env` for compose, mode 0600; `~/.bosun/env` for a service, mode 0600) or
+  the vault (`bosun credentials set llm anthropic --shared`); account passwords and tokens
   are only ever in the encrypted vault.
 - **Keep it updated** (`brew upgrade`, the install script, or
   `docker compose pull`).

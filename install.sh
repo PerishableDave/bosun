@@ -174,9 +174,11 @@ cat <<EOF
 
 Next steps:
   bosun setup              # config, data directory (~/.bosun) and your admin user
-  bosun service install    # run bosund in the background at login (coming in this release;
-                           # until then: bosund &)
-  bosun login && bosun chat "hello"
+  bosun service install    # run bosund in the background at login
+  bosun login
+  bosun credentials set llm anthropic --shared   # your model API key (not needed for Ollama)
+  bosun doctor             # check everything works
+  bosun chat "hello"
 
 Docs: https://github.com/$repo/blob/main/docs/DEPLOY.md
 EOF

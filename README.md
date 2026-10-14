@@ -56,15 +56,15 @@ for a local model, set `llm.default: ollama/<model>` (Ollama at
 endpoint, `base_url` + `api_key_env`) is also supported.
 
 ```sh
-./bin/bosund                  # start the daemon (Ctrl-C / SIGTERM to stop), or `bosun service install`
+./bin/bosun service install   # run bosund in the background at login (or run ./bin/bosund in a terminal)
 ```
 
-In another terminal:
+Then:
 
 ```sh
-./bin/bosun login                          # stores a session token in <data_dir>/cli-token
-./bin/bosun credentials set llm anthropic  # paste the API key at the hidden prompt (admin; stored encrypted)
-./bin/bosun doctor                         # checks everything, including that the key works
+./bin/bosun login                                 # stores a session token in <data_dir>/cli-token
+./bin/bosun credentials set llm anthropic --shared  # paste the API key at the hidden prompt (admin; stored encrypted)
+./bin/bosun doctor                                # checks everything, including that the key works
 ./bin/bosun tools                          # what the assistant can do, and your policy for each
 ./bin/bosun chat "hello"                   # one turn; `bosun chat` alone opens a session
 ```
@@ -796,6 +796,7 @@ Telegram `token_env`).
 ```sh
 bosun doctor             # ok / warn / fail per check; exits non-zero on any failure
 bosun version            # CLI and daemon versions
+bosun config check       # load and validate a config file (--config) without a daemon
 ```
 
 `bosun doctor` checks that the config loads, the data dir is 0700, the vault

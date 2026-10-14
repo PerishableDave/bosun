@@ -15,21 +15,25 @@ daemon:
   listen: 0.0.0.0:7777
   data_dir: /data
 
-  # bosund requires TLS on any non-loopback listen address. Until
-  # `daemon.behind_proxy` is available, the entrypoint generates a
-  # self-signed certificate in /data/tls/ on first run (valid for
-  # "bosun", "localhost" and 127.0.0.1), and proxies talk HTTPS to it.
+  # Default: TLS on. bosund requires TLS on any non-loopback listen address,
+  # so the entrypoint generates a self-signed certificate in /data/tls/ on
+  # first run (valid for "bosun", "localhost" and 127.0.0.1). This is the safe
+  # default if the port is ever exposed without a proxy; proxies talk HTTPS
+  # to it (Caddy: tls_insecure_skip_verify; Tailscale: https+insecure://).
   tls:
     enabled: true
     cert_file: /data/tls/cert.pem
     key_file: /data/tls/key.pem
 
-  # behind_proxy: true tells bosund it is reached through a trusted reverse
-  # proxy (Caddy, Tailscale Serve) that terminates TLS, so plain HTTP on a
-  # non-loopback address is allowed and X-Forwarded-* headers are honoured.
-  # NOT YET SUPPORTED by this bosund version: once your bosund has it,
-  # uncomment the next line and set tls.enabled above to false.
+  # Proxy setups: the switch to plain HTTP behind a TLS-terminating proxy
+  # (Caddy, Tailscale Serve). To use it, set `behind_proxy: true` below AND
+  # `tls.enabled: false` above (the two are mutually exclusive), then proxy to
+  # bosun:7777 (`reverse_proxy bosun:7777`, `tailscale serve --bg 7777`).
+  # behind_proxy makes bosund honour X-Forwarded-* headers from
+  # trusted_proxies only (default: loopback and private ranges, which covers
+  # the compose network). Keep the published port on 127.0.0.1.
   # behind_proxy: true
+  # trusted_proxies: [172.16.0.0/12]
 
   web_ui: true
   # The vault master key is kept in /data/master.key (there is no OS keychain
@@ -62,10 +66,12 @@ integrations:
 
 channels:
   telegram:
-    # Idle until a bot token is available: set TELEGRAM_BOT_TOKEN for the
-    # bosun service, or store it in the vault with
-    # `bosun credentials set channels telegram_bot_token --shared`.
-    enabled: true
+    # Disabled until a bot token exists, so first-run `bosun doctor` is clean.
+    # Store the token in the vault with
+    # `bosun credentials set channels telegram_bot_token --shared` (or set
+    # TELEGRAM_BOT_TOKEN for the bosun service), then change this to true and
+    # `docker compose restart bosun`.
+    enabled: false
     token_env: TELEGRAM_BOT_TOKEN
 
 policy:

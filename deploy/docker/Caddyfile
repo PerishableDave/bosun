@@ -14,16 +14,17 @@
 bosun.home.example {
 	tls internal
 
-	# Today bosund serves HTTPS with the self-signed certificate the container
-	# generated (TLS is required on non-loopback addresses). The hop is inside
-	# the compose network, so the certificate is not verified.
+	# Default (TLS on): bosund serves HTTPS with the self-signed certificate the
+	# container generated. The hop is inside the compose network, so the
+	# certificate is not verified.
 	reverse_proxy https://bosun:7777 {
 		transport http {
 			tls_insecure_skip_verify
 		}
 	}
 
-	# Once bosund supports daemon.behind_proxy (and you set it, with
-	# daemon.tls.enabled: false), replace the block above with:
+	# Proxy variant: set daemon.behind_proxy: true and daemon.tls.enabled:
+	# false in /data/bosun.yaml, restart bosun, then replace the block above
+	# with:
 	# reverse_proxy bosun:7777
 }

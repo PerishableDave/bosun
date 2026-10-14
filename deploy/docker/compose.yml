@@ -90,7 +90,8 @@ services:
   # Tailscale Serve alternative (recommended; no open ports). Simplest is on
   # the host, where Tailscale is already installed:
   #   tailscale serve --bg https+insecure://127.0.0.1:7777
-  # (once bosund runs with behind_proxy and TLS off: tailscale serve --bg 7777)
+  # (with daemon.behind_proxy: true and tls.enabled: false in /data/bosun.yaml:
+  #  tailscale serve --bg 7777)
   # which serves https://<host>.<tailnet>.ts.net to your tailnet only.
   # Or as a sidecar container sharing Bosun's network namespace:
   # tailscale:
