@@ -207,11 +207,20 @@ or open the web UI (step 4).
 
 **Household users.** `bosun setup` creates the first (admin) account. Each
 person should have their own account so that their memory, connected
-accounts and approvals stay separate; a command for an admin to add more
-users is not available yet, so for now Bosun on main is single-account.
-Every user (once created) connects their own mail and calendar after `bosun
-login` with `bosun connect email` / `bosun connect calendar`, and links
-Telegram with `bosun channels link telegram`.
+accounts and approvals stay separate. An admin adds people with an invite
+code, so the admin never learns their password:
+
+```sh
+bosun users add alice            # prints a single-use code valid for 24 hours
+```
+
+Alice then runs `bosun accept-invite <code> --server https://bosun.home:7777`
+on her own machine (or opens the web UI and chooses "Have an invite code?"),
+picks a password, and is logged in. From there she connects her own mail and
+calendar with `bosun connect email` / `bosun connect calendar` and links
+Telegram with `bosun channels link telegram`. Admins manage accounts with
+`bosun users list|disable|enable|reset-password|remove` or the Users tab in
+the web UI; removing a user deletes everything they own except audit entries.
 
 ### 4. Reach it from your devices
 
