@@ -28,6 +28,7 @@ var _ TurnRunner = (*agent.Agent)(nil)
 type Conversations interface {
 	CreateConversation(ctx context.Context, userID int64, title string, routineID int64) (*store.Conversation, error)
 	ListMessages(ctx context.Context, conversationID string) ([]*store.Message, error)
+	SetConversationUnread(ctx context.Context, userID int64, id string, unread bool) (*store.Conversation, bool, error)
 }
 
 // MaxEventPayload bounds the event payload bytes appended to a routine
@@ -86,6 +87,9 @@ func (ar *AgentRunner) RunRoutine(ctx context.Context, r Routine, inv Invocation
 		ar.log.Warn("routines: read run reply", "run_id", run.ID, "err", rerr)
 	}
 	run.Reply = reply
+	if reply != "" {
+		ar.markUnread(r.UserID, conv.ID)
+	}
 	switch {
 	case err == nil:
 		run.Status = StatusDone
@@ -155,6 +159,23 @@ func (ar *AgentRunner) watchApprovals(userID, runID int64, convID string) func()
 	return func() {
 		sub.Close()
 		<-done
+	}
+}
+
+// markUnread flags a run's conversation as having a reply the owner has not
+// seen (cleared by POST /v1/conversations/{id}/read) and announces it.
+func (ar *AgentRunner) markUnread(userID int64, convID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, changed, err := ar.convs.SetConversationUnread(ctx, userID, convID, true)
+	if err != nil {
+		ar.log.Warn("routines: mark conversation unread", "conversation_id", convID, "err", err)
+		return
+	}
+	if changed && ar.bus != nil {
+		ar.bus.Publish(userID, events.Event{Type: events.TypeConversationUpdated, Data: events.ConversationUpdatedData{
+			ID: c.ID, Title: c.Title, TitleSource: c.TitleSource, Pinned: c.Pinned, Archived: c.Archived,
+			Unread: c.Unread, UpdatedAt: c.UpdatedAt, ConversationID: c.ID}})
 	}
 }
 

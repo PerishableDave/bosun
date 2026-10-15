@@ -436,22 +436,51 @@ func (m *StoreManager) Wait(ctx context.Context, id string) (Decision, error) {
 // cancel marks id canceled because its waiter went away. If the approval was
 // resolved concurrently, the resolution stands; cause is returned either way.
 func (m *StoreManager) cancel(id string, cause error) error {
-	// ctx is done; use a short detached context for the bookkeeping write.
+	m.cancelNoted(id, "waiting run went away")
+	return cause
+}
+
+// CancelConversation cancels userID's pending approvals in conversationID
+// (the conversation is being deleted) and returns how many it canceled.
+// Their waiting turns, if any, see ErrCanceled.
+func (m *StoreManager) CancelConversation(ctx context.Context, userID int64, conversationID string) (int, error) {
+	as, err := m.st.ListPendingApprovals(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("approval: cancel conversation: %w", err)
+	}
+	n := 0
+	for _, a := range as {
+		if a.ConversationID == conversationID && a.UserID == userID {
+			if m.cancelNoted(a.ID, "conversation deleted") {
+				n++
+			}
+		}
+	}
+	return n, nil
+}
+
+// cancelNoted marks id canceled with an audit note and reports whether it
+// did (false if it was resolved concurrently).
+func (m *StoreManager) cancelNoted(id, note string) bool {
+	// The caller's ctx may be done; use a short detached context for the
+	// bookkeeping write.
 	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	a, err := m.st.ResolveApproval(ctx, id, store.ApprovalCanceled, 0)
 	if err == nil {
 		m.removePreview(id)
 		out := fromStore(a)
-		m.record(ctx, out, DecisionCanceled, 0, "waiting run went away")
+		m.record(ctx, out, DecisionCanceled, 0, note)
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
 			Data: events.ApprovalResolvedData{ApprovalID: id, Decision: DecisionCanceled, ConversationID: out.ConversationID}})
 		m.wake(id)
 		m.notify(ctx, out, DecisionCanceled)
-	} else if !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	if !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
 		m.log.Error("approval: cancel failed", "approval_id", id, "err", err)
 	}
-	return cause
+	return false
 }
 
 // Resolve implements Manager. Only the owning user may resolve; a resolution
