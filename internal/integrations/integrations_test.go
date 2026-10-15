@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ const modulePath = "github.com/perishabledave/bosun"
 // exactAllow.
 var forbiddenExact = []string{"os/exec"}
 
-// exactAllow names, per forbidden import, the single integration directory
+// exactAllow names, per forbidden import, the integration directories
 // (relative to internal/integrations) allowed to use it.
 //
 // os/exec: the MCP bridge (internal/integrations/mcp) must spawn stdio MCP
@@ -27,7 +28,14 @@ var forbiddenExact = []string{"os/exec"}
 // exemption covers that one package directory only: not its subpackages
 // (e.g. mcp/mcptest) and not any other integration. The bridge gives
 // children a minimal environment rather than the daemon's.
-var exactAllow = map[string]string{"os/exec": "mcp"}
+//
+// os/exec: the code sandbox (internal/integrations/sandbox) must run the
+// docker CLI to start throwaway, network-less containers; that is the
+// point of the integration, and the model's code runs in the container,
+// never on the host. The exemption covers that one package directory only,
+// and the sandbox gives the docker CLI a minimal environment rather than
+// the daemon's.
+var exactAllow = map[string][]string{"os/exec": {"mcp", "sandbox"}}
 
 // forbiddenPrefix are module packages (and their subpackages) no integration
 // may use.
@@ -47,7 +55,7 @@ const integrationsPkg = modulePath + "/internal/integrations"
 func checkImport(own, dir, imp string) string {
 	for _, f := range forbiddenExact {
 		if imp == f {
-			if allowed, ok := exactAllow[f]; ok && dir == allowed {
+			if slices.Contains(exactAllow[f], dir) {
 				continue
 			}
 			return "imports " + imp
@@ -175,6 +183,11 @@ import "os/exec"`)
 import "os/exec"`)
 	write("mcpx/x.go", `package mcpx
 import "os/exec"`)
+	// So may the sandbox (it drives the docker CLI), but not its subpackages.
+	write("sandbox/docker.go", `package sandbox
+import "os/exec"`)
+	write("sandbox/sub/sub.go", `package sub
+import "os/exec"`)
 
 	violations, err := scan(root)
 	if err != nil {
@@ -201,7 +214,13 @@ import "os/exec"`)
 	if strings.Contains(joined, "stdio.go") {
 		t.Errorf("mcp/stdio.go must be allowed to import os/exec:\n%s", joined)
 	}
-	if len(violations) != 11 {
-		t.Errorf("got %d violations, want 11:\n%s", len(violations), joined)
+	if strings.Contains(joined, "docker.go") {
+		t.Errorf("sandbox/docker.go must be allowed to import os/exec:\n%s", joined)
+	}
+	if !strings.Contains(joined, filepath.Join("sandbox", "sub", "sub.go")) {
+		t.Errorf("sandbox/sub must not be allowed to import os/exec:\n%s", joined)
+	}
+	if len(violations) != 12 {
+		t.Errorf("got %d violations, want 12:\n%s", len(violations), joined)
 	}
 }

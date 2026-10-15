@@ -63,6 +63,10 @@ integrations:
     enabled: true
   calendar:
     enabled: true
+  sandbox:
+    # Needs the Docker socket, which is root-equivalent on the host and is
+    # not mounted by default; see compose.sandbox.yml and docs/DEPLOY.md.
+    enabled: false
 
 channels:
   telegram:

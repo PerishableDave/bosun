@@ -1,0 +1,37 @@
+# Opt-in overlay: lets Bosun's code sandbox (integrations.sandbox, tool
+# sandbox.run) start containers from inside the compose setup.
+#
+# WARNING: this mounts the host's Docker socket into the bosun container.
+# Access to the Docker socket is ROOT-EQUIVALENT ON THE HOST: anything that
+# can talk to it can start a privileged container that mounts the host's /.
+# Bosun itself only ever starts locked-down sandbox containers (no network,
+# no host mounts, read-only, non-root), and the model never gets the socket,
+# but anyone who compromises the bosun container gets the host.
+#
+# If you want the sandbox, prefer running Bosun directly on a personal
+# machine (docs/DEPLOY.md, section A), where bosund uses your own Docker.
+#
+# Usage (Linux host):
+#   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#   docker compose -f compose.yml -f compose.sandbox.yml up -d --build
+# then set `integrations.sandbox.enabled: true` in /data/bosun.yaml and
+# `docker compose restart bosun`. Keep passing both -f files (or set
+# COMPOSE_FILE=compose.yml:compose.sandbox.yml in .env).
+#
+# This builds a local image with the docker CLI added (the published image
+# does not include it). No host paths are needed by the sandbox itself: code
+# and results travel over the containers' stdin/stdout, so the sibling
+# containers it starts on the host's Docker work without path mapping.
+
+services:
+  bosun:
+    image: bosun:sandbox
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        WITH_DOCKER_CLI: "true"
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID to the group id that owns /var/run/docker.sock}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

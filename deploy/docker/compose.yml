@@ -10,6 +10,12 @@
 #   searxng  private meta search engine backing websearch.search
 #   caddy    example HTTPS reverse proxy for bosun.home.example (see Caddyfile)
 #
+# Code sandbox (sandbox.run) is NOT enabled here and the Docker socket is not
+# mounted: socket access is root-equivalent on the host. If you accept that,
+# use the opt-in overlay instead of a profile (a profile cannot add a mount
+# to the bosun service); see compose.sandbox.yml and docs/DEPLOY.md:
+#   docker compose -f compose.yml -f compose.sandbox.yml up -d --build
+#
 # Put API keys in a .env file next to this file (never in bosun.yaml), e.g.
 #   ANTHROPIC_API_KEY=sk-ant-...
 #   TELEGRAM_BOT_TOKEN=123456:ABC...
