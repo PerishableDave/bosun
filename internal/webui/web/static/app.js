@@ -164,8 +164,10 @@ function showApp(user) {
 
   const newChat = () => {
     openDrawer(false);
-    if (location.hash === "#chat" || location.hash === "") route();
-    else location.hash = "#chat";
+    // Switch now (pushState fires no hashchange), so keys typed right after
+    // the shortcut land in the new chat.
+    if (location.hash !== "#chat") history.pushState(null, "", "#chat");
+    route();
     chat.focus();
   };
 
@@ -284,6 +286,9 @@ function showApp(user) {
       pending.refresh();
     } else if (type === "conversation_updated") {
       convs.applyEvent(d);
+    } else if (type === "conversation_deleted") {
+      convs.forget(d.id);
+      chat.deleted(d.id);
     } else if (type === "routine_finished") {
       convs.refreshSoon();
     }

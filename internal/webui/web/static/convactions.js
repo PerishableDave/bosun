@@ -9,7 +9,9 @@ function fail(e, what) {
   else errorToast(e, what + " failed");
 }
 
-export const displayTitle = (c) => (c && c.title) || "New chat";
+// displayTitle falls back to the last message preview for untitled (older)
+// conversations.
+export const displayTitle = (c) => (c && (c.title || c.last_message_preview)) || "New chat";
 
 export async function rename(id, title) {
   const c = convs.get(id);

@@ -25,7 +25,9 @@ function normalize(c) {
 }
 
 // activityTime is the time a conversation is grouped and sorted by.
-export const activityTime = (c) => new Date(c.last_message_at || c.updated_at || c.created_at || 0);
+// Like the server: last message time, else creation time (renames and pins
+// do not reorder).
+export const activityTime = (c) => new Date(c.last_message_at || c.created_at || c.updated_at || 0);
 
 export const convs = {
   items: [],          // the loaded page(s) for the current filter
@@ -183,6 +185,15 @@ export const convs = {
       this.changed();
       throw e;
     }
+  },
+
+  // forget drops a conversation deleted elsewhere (conversation_deleted).
+  forget(id) {
+    const c = this.meta.get(id);
+    this.meta.delete(id);
+    const i = c ? this.items.indexOf(c) : -1;
+    if (i >= 0) this.items.splice(i, 1);
+    this.changed();
   },
 
   // markRead clears the unread dot; an older daemon has no read state, so

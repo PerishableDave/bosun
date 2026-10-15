@@ -415,6 +415,10 @@ export function createChat(shell) {
     };
 
     const onEvent = (type, d) => {
+      if (type === "conversation_updated") { // the provisional title
+        convs.applyEvent(d);
+        return;
+      }
       if (thinking) { thinking.remove(); thinking = null; }
       switch (type) {
         case "text":
