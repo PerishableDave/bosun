@@ -8,7 +8,9 @@ minor versions may contain breaking changes; they are called out under
 
 ## [Unreleased]
 
-First public release, planned as `0.1.0`.
+Nothing yet.
+
+## [0.2.0] - 2026-10-14
 
 ### Added
 
@@ -38,6 +40,29 @@ First public release, planned as `0.1.0`.
 - **Approval previews.** An integration can attach a screenshot to an
   approval (`GET /v1/approvals/{id}/preview`, shown in the web UI and sent
   as a photo on Telegram); previews are deleted when the approval resolves.
+- **Sandbox integration** (`integrations.sandbox`). `sandbox.run` executes
+  Python, Node or shell code in a throwaway Docker container: no network,
+  read-only root, tmpfs workdir, non-root, no capabilities, memory and pid
+  limits, hard timeout, fresh container per run; inputs and outputs travel as
+  tar streams, never bind mounts. Asks by default.
+- **Files integration** (`integrations.files`). Read, search, write, move and
+  delete within admin-listed root folders only, with symlink and traversal
+  guards, explicit `overwrite: true` for existing files, and destructive
+  deletes.
+
+### Changed
+
+- Policy precedence is now scoped rule > capability rule > integration
+  default > risk default > deny; an integration default can only tighten the
+  admin's risk default, never loosen it.
+- `GOALS.md` principle 1 reworded: browser, files and code execution exist
+  only as scoped, contained integrations.
+
+## [0.1.0] - 2026-10-13
+
+First public release.
+
+### Added
 
 - **Daemon and CLI.** `bosund` (HTTP + SSE API, agent loop, scheduler) and
   `bosun` (CLI), two static binaries for macOS and Linux on amd64/arm64.
@@ -99,4 +124,6 @@ First public release, planned as `0.1.0`.
 - Project documents: README, GOALS, ARCHITECTURE, API, DEPLOY, INTEGRATIONS
   roadmap, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES.
 
-[Unreleased]: https://github.com/perishabledave/bosun/commits/main
+[Unreleased]: https://github.com/perishabledave/bosun/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/perishabledave/bosun/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/perishabledave/bosun/releases/tag/v0.1.0
