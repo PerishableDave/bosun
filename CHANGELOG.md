@@ -10,6 +10,39 @@ minor versions may contain breaking changes; they are called out under
 
 Nothing yet.
 
+## [0.3.0] - 2026-10-15
+
+### Added
+
+- **Web UI overhaul** (see `docs/WEB_UI.md`). Conversations are first-class:
+  grouped sidebar (Pinned / Today / Yesterday / Previous 7 days / Older),
+  search (Cmd/Ctrl+K), rename, pin, archive with undo, delete with confirm,
+  Markdown export, source badges for routine and Telegram chats, an unread
+  dot for routine replies, live updates across tabs. Chat: streaming caret,
+  Stop, per-conversation drafts, Copy, "Jump to latest", Retry, folded tool
+  calls with details, approval cards with previews and "always allow on
+  <site>", a full Markdown renderer (tables, code with copy, lists, links).
+  App shell: collapsible sidebar (Cmd/Ctrl+B), phone drawer, Settings
+  (theme, password, shortcuts), toasts, reconnecting event stream, focus
+  rings and reduced-motion support.
+- **Conversation API**: `GET /v1/conversations` with `archived`, `q`,
+  `limit`, `before` cursor and the full conversation object (`title_source`,
+  `source`, `pinned`, `archived`, `unread`, `message_count`,
+  `last_message_at`, `last_message_preview`); `PATCH`, `DELETE`,
+  `POST .../stop`, `POST .../read`, `GET .../export?format=markdown|json`;
+  SSE `conversation_updated` and `conversation_deleted`; `done` may carry
+  `stopped: true`.
+- **Automatic titles**: a provisional title from the first message, then a
+  ≤6-word title from the extraction model; titles set by the user are never
+  overwritten.
+- CLI: `bosun conversations list|rename|pin|unpin|archive|unarchive|delete|export`.
+
+### Changed
+
+- `GET /v1/conversations` now returns unarchived conversations only, 50 per
+  page, pinned first then newest activity; pass `archived=all` for the old
+  behavior.
+
 ## [0.2.0] - 2026-10-14
 
 ### Added
@@ -124,6 +157,7 @@ First public release.
 - Project documents: README, GOALS, ARCHITECTURE, API, DEPLOY, INTEGRATIONS
   roadmap, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES.
 
-[Unreleased]: https://github.com/perishabledave/bosun/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/perishabledave/bosun/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/perishabledave/bosun/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/perishabledave/bosun/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/perishabledave/bosun/releases/tag/v0.1.0
