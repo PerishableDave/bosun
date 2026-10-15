@@ -17,7 +17,8 @@ func TestScopedPolicyApprovalAndBrowserCommands(t *testing.T) {
 	mux.HandleFunc("GET /v1/policy", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"defaults":{"read":"allow","write":"ask","destructive":"ask"},"rules":[`+
 			`{"capability":"browser.act","decision":"ask","updated_at":"2026-10-12T22:00:00Z"},`+
-			`{"capability":"browser.act","scope":"opentable.com","decision":"allow","updated_at":"2026-10-12T22:00:00Z"}]}`)
+			`{"capability":"browser.act","scope":"opentable.com","decision":"allow","updated_at":"2026-10-12T22:00:00Z"}],`+
+			`"integration_defaults":{"browser.read":"ask"}}`)
 	})
 	mux.HandleFunc("PUT /v1/policy/{cap}", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Decision string }
@@ -74,7 +75,8 @@ func TestScopedPolicyApprovalAndBrowserCommands(t *testing.T) {
 		return out
 	}
 	if out := cli("policy", "list"); !strings.Contains(out, "SITE") || !strings.Contains(out, "browser.act  opentable.com  allow") ||
-		!strings.Contains(out, "browser.act  (any)          ask") {
+		!strings.Contains(out, "browser.act  (any)          ask") || !strings.Contains(out, "Integration defaults") ||
+		!strings.Contains(out, "browser.read=ask") {
 		t.Errorf("policy list:\n%s", out)
 	}
 	if out := cli("policy", "set", "browser.act", "allow", "--scope", "opentable.com"); !strings.Contains(out, "browser.act on opentable.com: allow") {

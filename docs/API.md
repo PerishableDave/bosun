@@ -287,7 +287,9 @@ The caller's effective permission configuration: the per-risk defaults (from
 `policy.defaults` in `bosun.yaml`) and the caller's explicit rules, ordered by
 capability, then scope. Precedence: a rule for (capability, site) (or for a
 parent domain of the site) beats the capability-wide rule, which beats the
-risk default; capabilities no registered tool declares are always denied.
+integration's own default for the capability (`integration_defaults`, e.g.
+`browser.read` asks), which beats the risk default; capabilities no
+registered tool declares are always denied.
 Scoped rules only apply to tools that declare a scope argument (the
 browser's); `scope` is omitted for capability-wide rules.
 
@@ -299,7 +301,8 @@ Response `200`:
   "rules": [
     { "capability": "browser.act", "scope": "opentable.com", "decision": "allow", "updated_at": "2026-10-12T22:00:00Z" },
     { "capability": "websearch.fetch", "decision": "ask", "updated_at": "2026-10-12T22:00:00Z" }
-  ]
+  ],
+  "integration_defaults": { "browser.read": "ask" }
 }
 ```
 

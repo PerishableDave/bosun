@@ -77,7 +77,22 @@ type Manifest struct {
 	Capabilities    []Capability
 	ConfigSchema    json.RawMessage // JSON Schema for Config.Settings; optional
 	CredentialKinds []string        // "oauth2:google", "apikey", ...
+	// DefaultDecisions optionally sets the policy decision ("allow", "ask"
+	// or "deny") for a capability when the user has no rule for it,
+	// instead of the admin's per-risk default. Keys must be in
+	// Capabilities. Precedence: scoped rule > capability-wide rule >
+	// DefaultDecisions > risk default > deny. The browser uses it so its
+	// read tools ask on the first visit to a site even though read-risk
+	// tools are allowed by default.
+	DefaultDecisions map[Capability]string
 }
+
+// DefaultDecision values.
+const (
+	DefaultAllow = "allow"
+	DefaultAsk   = "ask"
+	DefaultDeny  = "deny"
+)
 
 // HasCapability reports whether c is declared in the manifest.
 func (m Manifest) HasCapability(c Capability) bool {
@@ -110,6 +125,13 @@ type Tool struct {
 	// only. Empty means the tool is unscoped (the decision is per
 	// capability, as for every tool without it).
 	ScopeArg string
+	// ScopeFunc optionally computes the call's scope when the scope is not
+	// an argument, e.g. the site of the page the browser currently shows
+	// for browser.read. The dispatcher uses it only when ScopeArg is empty
+	// (the registry rejects tools that set both) and normalizes the result
+	// with NormalizeScope; "" means unscoped. ctx carries the calling user
+	// (UserIDFromContext) and conversation. A panic is treated as "".
+	ScopeFunc func(ctx context.Context, args json.RawMessage) string
 	// RiskFunc optionally computes the risk of one call from its
 	// arguments. The dispatcher only ever escalates: a result lower than
 	// Risk (or invalid) is ignored. An escalated call is never silently

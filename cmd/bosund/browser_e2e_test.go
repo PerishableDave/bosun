@@ -59,9 +59,13 @@ func (b *bistro) handler() http.Handler {
 }
 
 // TestEndToEndBrowser drives the browser integration through the daemon
-// with the fake LLM and a real headless Chrome: a site-scoped rule lets
-// browser.act run without asking, browser.submit asks with a preview
-// served by the API, approving submits, and denying leaves the page alone.
+// with the fake LLM and a real headless Chrome: the first visit to a site
+// asks (browser.read's integration default beats the read risk default)
+// and "approve and always allow" makes that site quiet for open, read,
+// find and screenshot; another site asks again and a sensitive site asks
+// at destructive risk; a site-scoped rule lets browser.act run without
+// asking, browser.submit asks with a preview served by the API, approving
+// submits, and denying leaves the page alone.
 func TestEndToEndBrowser(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live browser test skipped in -short mode")
@@ -144,10 +148,57 @@ policy:
 	siteArg := `"site":"` + host + `"`
 	conv := h.newConversation(alice)
 
-	// 1. open, read, click a plain link: no approval (read is allowed by
-	// default; the scoped rule covers browser.act).
+	// 0. Reading is not allowed by default even though read risk is: the
+	// browser declares "ask" for browser.read, and the tool list says so.
+	var tl api.ToolListResponse
+	if c := h.do("GET", "/v1/tools", alice, nil, &tl); c != 200 {
+		t.Fatalf("tools = %d", c)
+	}
+	decisions := map[string]string{}
+	for _, tr := range tl.Tools {
+		decisions[tr.Name] = tr.Decision
+	}
+	if decisions["browser.open"] != "ask" || decisions["browser.read"] != "ask" || decisions["browser.screenshot"] != "ask" {
+		t.Errorf("tool decisions = %v", decisions)
+	}
+	if c := h.do("GET", "/v1/policy", alice, nil, &pol); c != 200 || pol.IntegrationDefaults["browser.read"] != "ask" {
+		t.Errorf("policy integration defaults = %d %+v", c, pol.IntegrationDefaults)
+	}
+
+	// The first visit asks, scoped to the site at read risk (so clients
+	// offer "always allow on <site>"); approve and always allow.
+	var first []struct{ Scope, Risk, Tool string }
+	h.llm.Push(
+		fake.ToolCall("o0", "browser__open", `{"url":"`+srv.URL+`/"}`),
+		fake.Text("opened"))
+	h.turn(alice, conv, "open the bistro", func(e sseEvent) {
+		if e.Type != "approval_required" {
+			return
+		}
+		first = append(first, struct{ Scope, Risk, Tool string }{field(e, "scope"), field(e, "risk"), field(e, "tool")})
+		if c := h.do("POST", "/v1/approvals/"+field(e, "approval_id"), alice,
+			api.ResolveApprovalRequest{Decision: "approve", Always: true}, nil); c != 200 {
+			t.Errorf("approve always = %d", c)
+		}
+	})
+	if len(first) != 1 || first[0].Scope != host || first[0].Risk != "read" || first[0].Tool != "browser.open" {
+		t.Fatalf("first visit approvals = %+v", first)
+	}
+	reqs := h.llm.Requests()
+	if tr := lastToolResult(t, reqs[len(reqs)-1]); tr.IsError || !strings.Contains(tr.Content, "Bistro") {
+		t.Fatalf("first open = %+v", tr)
+	}
+	if c := h.do("GET", "/v1/policy", alice, nil, &pol); c != 200 || !hasRule(pol, "browser.read", host, "allow") {
+		t.Fatalf("rule from always-allow = %+v", pol)
+	}
+
+	// 1. open, find, screenshot, read, click a plain link: no approval (the
+	// scoped browser.read rule covers the site, also for the tools scoped
+	// by the current page; the scoped rule covers browser.act).
 	h.llm.Push(
 		fake.ToolCall("o1", "browser__open", `{"url":"`+srv.URL+`/"}`),
+		fake.ToolCall("f1", "browser__find", `{"query":"menu"}`),
+		fake.ToolCall("s1", "browser__screenshot", `{}`),
 		fake.ToolCall("r1", "browser__read", `{}`),
 		fake.ToolCall("c1", "browser__click", `{`+siteArg+`,"ref":"ref_1"}`),
 		fake.Text("opened the menu"))
@@ -155,7 +206,7 @@ policy:
 	if got := strings.Join(types(evs), ","); strings.Contains(got, "approval_required") || evs[len(evs)-1].Type != "done" {
 		t.Fatalf("events = %s", got)
 	}
-	reqs := h.llm.Requests()
+	reqs = h.llm.Requests()
 	if tr := lastToolResult(t, reqs[len(reqs)-1]); tr.IsError || !strings.Contains(tr.Content, "Now on: Menu") ||
 		!strings.Contains(tr.Content, "untrusted-data") {
 		t.Fatalf("click result = %+v", tr)
@@ -261,9 +312,28 @@ policy:
 			}
 		}
 	})
-	if c := h.do("GET", "/v1/policy", alice, nil, &pol); c != 200 || len(pol.Rules) != 1 || pol.Rules[0].Scope != host ||
-		pol.Rules[0].Capability != "browser.act" || pol.Rules[0].Decision != "allow" {
+	if c := h.do("GET", "/v1/policy", alice, nil, &pol); c != 200 || len(pol.Rules) != 2 || !hasRule(pol, "browser.act", host, "allow") {
 		t.Errorf("rule from always-allow = %+v", pol)
+	}
+
+	// 4b. Another site asks again (scoped to it); a sensitive site asks at
+	// destructive risk (no "always" offered), even though the risk default
+	// for read is allow. Both are denied, so nothing is fetched.
+	other := strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
+	var asked []struct{ Scope, Risk string }
+	h.llm.Push(
+		fake.ToolCall("o5", "browser__open", `{"url":"`+other+`/"}`),
+		fake.ToolCall("o6", "browser__open", `{"url":"https://www.chase.com/"}`),
+		fake.Text("ok"))
+	h.turn(alice, conv, "elsewhere", func(e sseEvent) {
+		if e.Type == "approval_required" {
+			asked = append(asked, struct{ Scope, Risk string }{field(e, "scope"), field(e, "risk")})
+			h.do("POST", "/v1/approvals/"+field(e, "approval_id"), alice, api.ResolveApprovalRequest{Decision: "deny"}, nil)
+		}
+	})
+	if len(asked) != 2 || asked[0].Scope != "localhost" || asked[0].Risk != "read" ||
+		asked[1].Scope != "chase.com" || asked[1].Risk != "destructive" {
+		t.Errorf("other / sensitive site approvals = %+v", asked)
 	}
 
 	// 5. Stop.
@@ -273,6 +343,16 @@ policy:
 	if c := h.do("GET", "/v1/browser", alice, nil, &st); c != 200 || st.Running {
 		t.Errorf("status after stop = %+v", st)
 	}
+}
+
+// hasRule reports whether p holds the rule (capability, scope, decision).
+func hasRule(p api.PolicyResponse, capability, scope, decision string) bool {
+	for _, r := range p.Rules {
+		if r.Capability == capability && r.Scope == scope && r.Decision == decision {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *harness) get(path, token string) *http.Response {

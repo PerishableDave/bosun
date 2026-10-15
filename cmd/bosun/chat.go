@@ -216,7 +216,7 @@ func (c *chatSession) approve(ctx context.Context, d events.ApprovalRequiredData
 	}
 	choices := "[y/N]"
 	if offerAlways(d.Scope, d.Risk) {
-		choices = "[y/N/a=always on " + d.Scope + "]"
+		choices = "[y]es / [a]lways on " + d.Scope + " / [N]o"
 	}
 	fmt.Fprintf(c.out, "Approve %s %s [%s risk] %s? ", d.Tool, oneLineTrunc(compactJSON(d.Args), 300), d.Risk, choices)
 	line, rerr := c.in.ReadString('\n')

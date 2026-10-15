@@ -26,8 +26,15 @@ First public release, planned as `0.1.0`.
 - **Site-scoped policy rules.** A rule can be limited to one site
   (`bosun policy set browser.act allow --scope opentable.com`,
   `PUT /v1/policy/{capability}?scope=`); scoped rule > capability rule >
-  risk default. Approvals of scoped calls offer "Approve and always allow on
-  <site>" in the web UI, the CLI and Telegram.
+  integration default > risk default. Approvals of scoped calls offer
+  "Approve and always allow on <site>" in the web UI, the CLI and Telegram.
+- **Integration default decisions.** An integration's manifest can declare a
+  default decision per capability (`DefaultDecisions`), used instead of the
+  risk default when the user has no rule. The browser declares
+  `browser.read: ask`: a visit can carry data out in its URL, so the first
+  visit to each site asks, and "always allow on <site>" makes it quiet.
+  `browser.read`, `browser.find` and `browser.screenshot` are scoped to the
+  current page's site (a tool's `ScopeFunc`).
 - **Approval previews.** An integration can attach a screenshot to an
   approval (`GET /v1/approvals/{id}/preview`, shown in the web UI and sent
   as a photo on Telegram); previews are deleted when the approval resolves.

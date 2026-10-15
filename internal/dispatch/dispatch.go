@@ -7,7 +7,7 @@
 //  3. argument validation against the tool's InputSchema,
 //  4. policy.Decide (deny → *DeniedError), after the tool's RiskFunc (if
 //     any) has had the chance to escalate the risk, and with the call's
-//     scope (the tool's ScopeArg, normalized) when the engine is a
+//     scope (the tool's ScopeArg or ScopeFunc, normalized) when the engine is a
 //     policy.ScopedEngine; an escalated call is never silently allowed,
 //  5. on ask: the integration's preview (integration.Previewer /
 //     ApprovalDetailer, if implemented), then an approval, blocking until
@@ -253,12 +253,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, c Call) (res integration.Resu
 	// 4. Risk escalation, scope, and policy.
 	risk, escalated := d.effectiveRisk(ctx, c, tool, call.Args, &e)
 	e.Risk = risk
-	scope := ""
-	if tool.ScopeArg != "" {
-		scope = ScopeOf(call.Args, tool.ScopeArg)
-		if scope != "" {
-			e.Notes = append(e.Notes, "scope: "+scope)
-		}
+	scope := d.scopeOf(ctx, c, tool, call.Args)
+	if scope != "" {
+		e.Notes = append(e.Notes, "scope: "+scope)
 	}
 	var dec policy.Decision
 	if se, ok := d.pol.(policy.ScopedEngine); ok && scope != "" {
@@ -330,6 +327,27 @@ func (d *Dispatcher) effectiveRisk(ctx context.Context, c Call, tool integration
 	}
 	e.Notes = append(e.Notes, fmt.Sprintf("risk escalated from %s to %s", tool.Risk, r))
 	return r, true
+}
+
+// scopeOf returns the call's normalized scope: the tool's ScopeArg, else
+// its ScopeFunc (a panic yields "", i.e. unscoped), else "".
+func (d *Dispatcher) scopeOf(ctx context.Context, c Call, tool integration.Tool, args json.RawMessage) string {
+	if tool.ScopeArg != "" {
+		return ScopeOf(args, tool.ScopeArg)
+	}
+	if tool.ScopeFunc == nil {
+		return ""
+	}
+	sctx := integration.WithConversationID(integration.WithUserID(ctx, c.UserID), c.ConversationID)
+	return func() (s string) {
+		defer func() {
+			if p := recover(); p != nil {
+				d.log.Error("dispatch: ScopeFunc panicked; treating the call as unscoped", "tool", tool.Name, "panic", fmt.Sprint(p))
+				s = ""
+			}
+		}()
+		return integration.NormalizeScope(tool.ScopeFunc(sctx, args))
+	}()
 }
 
 // ScopeOf extracts and normalizes the scope argument name from args ("" if

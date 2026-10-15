@@ -28,11 +28,14 @@ type siteIntegration struct {
 	previewErr error
 	previews   int
 	riskPanic  bool
+	page       string // the "current page" ScopeFunc reports
+	scopePanic bool
 }
 
 func (s *siteIntegration) Manifest() integration.Manifest {
 	return integration.Manifest{Name: "site", Version: "1", Scope: integration.ScopePerUser,
-		Capabilities: []integration.Capability{"site.act", "site.submit"}}
+		Capabilities:     []integration.Capability{"site.act", "site.submit", "site.read"},
+		DefaultDecisions: map[integration.Capability]string{"site.read": integration.DefaultAsk}}
 }
 func (s *siteIntegration) Init(context.Context, integration.Config, integration.CredentialSource) error {
 	return nil
@@ -68,6 +71,16 @@ func (s *siteIntegration) Tools() []integration.Tool {
 			}},
 		{Name: "site.submit", Capability: "site.submit", Risk: integration.RiskDestructive, InputSchema: schema, ScopeArg: "site",
 			Handler: s.handler("submit")},
+		{Name: "site.look", Capability: "site.read", Risk: integration.RiskRead, Handler: s.handler("look"),
+			ScopeFunc: func(ctx context.Context, _ json.RawMessage) string {
+				if s.scopePanic {
+					panic("scope boom")
+				}
+				if _, ok := integration.UserIDFromContext(ctx); !ok {
+					panic("ScopeFunc without user")
+				}
+				return s.page
+			}},
 	}
 }
 
@@ -113,7 +126,13 @@ func setupSite(t *testing.T) *siteFx {
 	if err := reg.Register(integ); err != nil {
 		t.Fatal(err)
 	}
-	eng := policy.NewEngine(st, policy.Options{Defaults: policy.Defaults{Read: policy.Allow, Write: policy.Ask, Destructive: policy.Ask}})
+	eng := policy.NewEngine(st, policy.Options{
+		Defaults: policy.Defaults{Read: policy.Allow, Write: policy.Ask, Destructive: policy.Ask},
+		CapabilityDefault: func(c integration.Capability) (policy.Decision, bool) {
+			d, ok := reg.CapabilityDefault(c)
+			return policy.Decision(d), ok
+		},
+	})
 	bus := events.NewBus()
 	dir := filepath.Join(t.TempDir(), "approvals")
 	appr := approval.NewManager(st, bus, approval.Options{Timeout: time.Minute, PreviewDir: dir})
@@ -237,6 +256,49 @@ func TestScopeOf(t *testing.T) {
 	} {
 		if got := ScopeOf(json.RawMessage(args), "site"); got != want {
 			t.Errorf("ScopeOf(%s) = %q, want %q", args, got, want)
+		}
+	}
+}
+
+// TestScopeFunc: a tool without a scope argument is scoped by its
+// ScopeFunc, so a scoped rule covers it; the integration's default (ask)
+// applies elsewhere; a panicking ScopeFunc is unscoped.
+func TestScopeFunc(t *testing.T) {
+	f := setupSite(t)
+	ctx := context.Background()
+	if _, err := f.eng.SetScopedRule(ctx, f.user, "site.read", "example.com", policy.Allow); err != nil {
+		t.Fatal(err)
+	}
+	f.integ.page = "https://WWW.example.com/menu"
+	if res, err := f.dispatch("site.look", `{}`); err != nil || res.Content != "look ok" {
+		t.Fatalf("Dispatch = %+v, %v", res, err)
+	}
+	es, _ := f.st.ListAudit(ctx, store.AuditFilter{Kind: string(audit.KindToolCall)})
+	if e := es[len(es)-1]; e.Decision != "allow" || !strings.Contains(strings.Join(e.Notes, ";"), "scope: example.com") {
+		t.Errorf("audit = %+v", e)
+	}
+
+	sub := f.bus.Subscribe(f.user, 0)
+	defer sub.Close()
+	// Another page: the integration default (ask), scoped to that site.
+	f.integ.page = "other.org"
+	got := f.answer(t, sub, approval.Deny)
+	if _, err := f.dispatch("site.look", `{}`); !errors.Is(err, ErrDenied) {
+		t.Fatalf("other site: %v", err)
+	}
+	if d := <-got; d.Scope != "other.org" || d.Risk != "read" {
+		t.Errorf("approval = %+v", d)
+	}
+	// No page, or a panicking ScopeFunc: unscoped, so the scoped rule does
+	// not apply.
+	for _, panics := range []bool{false, true} {
+		f.integ.page, f.integ.scopePanic = "", panics
+		got = f.answer(t, sub, approval.Deny)
+		if _, err := f.dispatch("site.look", `{}`); !errors.Is(err, ErrDenied) {
+			t.Fatalf("unscoped (panic=%v): %v", panics, err)
+		}
+		if d := <-got; d.Scope != "" {
+			t.Errorf("unscoped approval scope = %q", d.Scope)
 		}
 	}
 }

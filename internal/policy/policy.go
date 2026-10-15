@@ -1,6 +1,6 @@
 // Package policy defines how Bosun decides whether a tool call may run:
 // per user × capability (× optional scope, e.g. a site), scoped rule >
-// capability-wide rule > risk default > deny. Unknown
+// capability-wide rule > integration default > risk default > deny. Unknown
 // capabilities are denied. This package holds types only; the Engine
 // implementation is built separately.
 package policy
@@ -81,7 +81,8 @@ type Engine interface {
 // ScopeArg; Decide is DecideScoped with scope "".
 //
 // Precedence: a rule for (c, scope) (or a parent domain of scope) beats
-// the rule for (c, ""), which beats the risk default.
+// the rule for (c, ""), which beats the integration's default for c,
+// which beats the risk default.
 type ScopedEngine interface {
 	Engine
 	DecideScoped(ctx context.Context, userID int64, c integration.Capability, scope string, risk integration.Risk, args json.RawMessage) Decision

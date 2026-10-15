@@ -31,11 +31,12 @@ type fakeServer struct {
 	mu        sync.Mutex
 	messages  []string
 	decisions map[string]string
+	always    map[string]bool
 	auth      string
 }
 
 func newFake(t *testing.T, script func(f *fakeServer, w http.ResponseWriter, msg string)) *fakeServer {
-	f := &fakeServer{decisions: map[string]string{}}
+	f := &fakeServer{decisions: map[string]string{}, always: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/conversations", func(w http.ResponseWriter, r *http.Request) {
 		f.auth = r.Header.Get("Authorization")
@@ -58,6 +59,7 @@ func newFake(t *testing.T, script func(f *fakeServer, w http.ResponseWriter, msg
 		json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
 		f.decisions[r.PathValue("id")] = req.Decision
+		f.always[r.PathValue("id")] = req.Always
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"id":%q,"status":"approved"}`, r.PathValue("id"))
 	})
@@ -224,3 +226,36 @@ func TestChatCommandsEndToEnd(t *testing.T) {
 }
 
 func writeFile(path, s string) error { return os.WriteFile(path, []byte(s), 0o600) }
+
+// TestChatApprovalAlwaysOnSite: a scoped, non-destructive approval offers
+// "always on <site>"; a destructive one does not (and "a" then denies).
+func TestChatApprovalAlwaysOnSite(t *testing.T) {
+	for _, tc := range []struct {
+		risk, prompt, decision string
+		always                 bool
+	}{
+		{"read", "[read risk] [y]es / [a]lways on example.com / [N]o? ", "approve", true},
+		{"destructive", "[destructive risk] [y/N]? ", "deny", false},
+	} {
+		f := newFake(t, func(f *fakeServer, w http.ResponseWriter, msg string) {
+			sse(w,
+				[2]string{"approval_required", `{"approval_id":"appr_3","tool":"browser.open","args":{"url":"https://example.com/"},"risk":"` +
+					tc.risk + `","scope":"example.com"}`},
+				[2]string{"done", `{}`})
+		})
+		c, out, _ := newSession(f, "a\n")
+		c.convID = "conv_1"
+		if err := c.turn(context.Background(), "x"); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), tc.prompt) {
+			t.Errorf("%s: prompt missing %q:\n%s", tc.risk, tc.prompt, out)
+		}
+		if got := f.decisions["appr_3"]; got != tc.decision {
+			t.Errorf("%s: decision %q, want %q", tc.risk, got, tc.decision)
+		}
+		if f.always["appr_3"] != tc.always {
+			t.Errorf("%s: always = %v", tc.risk, f.always["appr_3"])
+		}
+	}
+}

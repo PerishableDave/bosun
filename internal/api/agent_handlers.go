@@ -467,6 +467,10 @@ type PolicyRuleResponse struct {
 type PolicyResponse struct {
 	Defaults PolicyDefaultsResponse `json:"defaults"`
 	Rules    []PolicyRuleResponse   `json:"rules"`
+	// IntegrationDefaults maps capabilities whose integration declares
+	// its own default decision (used instead of the risk default when
+	// there is no rule) to that decision, e.g. {"browser.read": "ask"}.
+	IntegrationDefaults map[string]string `json:"integration_defaults,omitempty"`
 }
 
 // SetPolicyRuleRequest is the body of PUT /v1/policy/{capability}.
@@ -500,6 +504,18 @@ func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rule := range rules {
 		out.Rules = append(out.Rules, toRule(rule))
+	}
+	if s.tools != nil {
+		for _, name := range s.tools.Names() {
+			if i, ok := s.tools.Integration(name); ok {
+				for c, d := range i.Manifest().DefaultDecisions {
+					if out.IntegrationDefaults == nil {
+						out.IntegrationDefaults = map[string]string{}
+					}
+					out.IntegrationDefaults[string(c)] = d
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

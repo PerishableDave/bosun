@@ -16,7 +16,9 @@ scoped, permissioned, and auditable.
 Listed in priority order. When two principles conflict, the one higher on the list wins.
 
 ### 1. Capability-scoped by design
-- The agent has **no** general shell, filesystem, or open-ended browser access.
+- The agent has **no** general shell, no unrestricted filesystem, and no
+  unrestricted browser. Browser, files and code execution exist only as
+  scoped, contained integrations (see ARCHITECTURE).
 - It can act only through integrations, and every integration declares its
   capabilities up front (e.g. `calendar.read`, `calendar.write`, `email.draft`,
   `email.send`).
@@ -61,7 +63,8 @@ Listed in priority order. When two principles conflict, the one higher on the li
 
 ## Non-Goals (v1)
 
-- Unrestricted computer, shell, or desktop control
+- Unrestricted computer, shell, filesystem, browser, or desktop control (the
+  browser, files and sandbox integrations are scoped and contained instead)
 - Hosted SaaS or multi-tenant deployment
 - Training or fine-tuning our own models
 - Mobile apps (chat-app frontends may come later)

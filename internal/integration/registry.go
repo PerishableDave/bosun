@@ -73,6 +73,14 @@ func Validate(i Integration) error {
 		}
 		seenCap[c] = true
 	}
+	for c, d := range m.DefaultDecisions {
+		if !seenCap[c] {
+			add("default decision for capability %q not declared in manifest", c)
+		}
+		if d != DefaultAllow && d != DefaultAsk && d != DefaultDeny {
+			add("default decision %q for capability %q must be %q, %q or %q", d, c, DefaultAllow, DefaultAsk, DefaultDeny)
+		}
+	}
 	seenTool := map[string]bool{}
 	for _, t := range i.Tools() {
 		if !dottedRe.MatchString(t.Name) {
@@ -98,6 +106,9 @@ func Validate(i Integration) error {
 		}
 		if t.ScopeArg != "" && !schemaHasProperty(t.InputSchema, t.ScopeArg) {
 			add("tool %q scope argument %q is not a property of its input schema", t.Name, t.ScopeArg)
+		}
+		if t.ScopeArg != "" && t.ScopeFunc != nil {
+			add("tool %q sets both ScopeArg and ScopeFunc", t.Name)
 		}
 	}
 	return errors.Join(errs...)
@@ -126,6 +137,20 @@ func (r *Registry) Register(i Integration) error {
 		r.tools[t.Name] = registeredTool{tool: t, integration: m.Name}
 	}
 	return nil
+}
+
+// CapabilityDefault returns the default decision ("allow", "ask" or
+// "deny") a registered integration's manifest declares for c
+// (Manifest.DefaultDecisions), if any.
+func (r *Registry) CapabilityDefault(c Capability) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, in := range r.integrations {
+		if d, ok := in.Manifest().DefaultDecisions[c]; ok {
+			return d, true
+		}
+	}
+	return "", false
 }
 
 // Integration returns the integration registered under name.

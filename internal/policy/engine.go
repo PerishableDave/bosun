@@ -49,6 +49,11 @@ type Options struct {
 	// registered integration. Capabilities for which it returns false are
 	// denied regardless of rules. When nil only syntax is checked.
 	Known func(integration.Capability) bool
+	// CapabilityDefault, if set, returns the decision an integration's
+	// manifest declares for a capability (integration.Manifest.
+	// DefaultDecisions). It applies when the user has no rule for the
+	// capability, before the risk default. An invalid decision is Deny.
+	CapabilityDefault func(integration.Capability) (Decision, bool)
 	// Log receives fail-closed causes. Nil discards.
 	Log *slog.Logger
 }
@@ -56,7 +61,8 @@ type Options struct {
 // StoreEngine is the database-backed Engine.
 //
 // Precedence: scoped rule (capability, scope) > capability-wide rule
-// (capability, "") > risk default > Deny. A scoped lookup tries the scope
+// (capability, "") > integration default (Options.CapabilityDefault) >
+// risk default > Deny. A scoped lookup tries the scope
 // and then its parent domains (integration.ScopeCandidates), so a rule for
 // "opentable.com" covers "m.opentable.com". It reads the
 // user and rule from the store on every call: there is no cache, so a rule
@@ -67,10 +73,11 @@ type Options struct {
 // store error, an invalid stored decision, or a rule carrying a Condition
 // (conditions are not evaluated in v1) all yield Deny.
 type StoreEngine struct {
-	st    Store
-	def   Defaults
-	known func(integration.Capability) bool
-	log   *slog.Logger
+	st     Store
+	def    Defaults
+	known  func(integration.Capability) bool
+	capDef func(integration.Capability) (Decision, bool)
+	log    *slog.Logger
 }
 
 var (
@@ -84,7 +91,7 @@ func NewEngine(st Store, opts Options) *StoreEngine {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &StoreEngine{st: st, def: opts.Defaults, known: opts.Known, log: log}
+	return &StoreEngine{st: st, def: opts.Defaults, known: opts.Known, capDef: opts.CapabilityDefault, log: log}
 }
 
 // DefaultsFromConfig converts the config form of risk defaults. Invalid values
@@ -161,10 +168,25 @@ func (e *StoreEngine) DecideScoped(ctx context.Context, userID int64, c integrat
 	case err == nil:
 		return ruleDecision(r)
 	case errors.Is(err, store.ErrNotFound):
-		return e.def.ForRisk(risk)
+		return e.defaultFor(c, risk)
 	default:
 		return deny("store error reading rule", "err", err)
 	}
+}
+
+// defaultFor is the decision without a rule: the integration's default for
+// c, else the risk default.
+func (e *StoreEngine) defaultFor(c integration.Capability, risk integration.Risk) Decision {
+	if e.capDef != nil {
+		if d, ok := e.capDef(c); ok {
+			if !d.Valid() {
+				e.log.Warn("policy: deny (fail closed)", "reason", "invalid integration default", "capability", string(c), "decision", string(d))
+				return Deny
+			}
+			return d
+		}
+	}
+	return e.def.ForRisk(risk)
 }
 
 func hasCondition(c json.RawMessage) bool {

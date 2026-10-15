@@ -168,6 +168,7 @@ type Manifest struct {
     Capabilities []Capability // every capability any tool may use
     ConfigSchema json.RawMessage
     CredentialKinds []string  // "oauth2:google", "apikey", ...
+    DefaultDecisions map[Capability]string // optional: "allow"|"ask"|"deny" instead of the risk default
 }
 
 type Tool struct {
@@ -179,7 +180,8 @@ type Tool struct {
     Handler     func(ctx context.Context, in json.RawMessage) (Result, error)
 
     // optional
-    ScopeArg string // argument whose (normalized) value scopes policy, e.g. "site"
+    ScopeArg  string // argument whose (normalized) value scopes policy, e.g. "site"
+    ScopeFunc func(ctx context.Context, args json.RawMessage) string // scope when not an argument (current page)
     RiskFunc func(ctx context.Context, args json.RawMessage) Risk // may escalate, never lower
 }
 
@@ -368,6 +370,13 @@ outside in:
   "name"` with values (password values are never shown). It runs in an
   isolated JavaScript world, so page scripts cannot tamper with the reader.
   Everything is `Untrusted`.
+- **Reading is scoped and asks per site.** A visit can carry data out in its
+  URL, so the manifest declares `DefaultDecisions{browser.read: ask}`: the
+  read tools ask even though read risk is allowed by default. `browser.open`
+  is scoped by its `url` (`ScopeArg`); `browser.read`, `find` and
+  `screenshot` by the current page's site (`ScopeFunc`). So the first visit
+  to a site asks, and "always allow on <site>" (a scoped `browser.read`
+  rule) makes reading that site quiet while every other site still asks.
 - **Acting is scoped to a site.** Page actions (`browser.act`) and
   `browser.login` take a `site` argument (the tool's `ScopeArg`), which must
   equal the current page's site, so policy decides per site. A user can allow
@@ -416,7 +425,7 @@ An interactive message and a routine run take the same path from step 3 on.
 4. **For each tool call:**
    1. `hooks.PreToolCall` runs (may rewrite args, cancel, or annotate).
    2. The tool's `RiskFunc`, if any, may escalate the risk for this call; the
-      scope is extracted from the tool's `ScopeArg`.
+      scope comes from the tool's `ScopeArg` (or its `ScopeFunc`).
       `policy.Decide(user, capability[, scope], risk, args)` returns `allow`,
       `ask`, or `deny` (an escalated call is never `allow`).
    3. On `ask`, the integration's preview (if it implements `Previewer`) is
@@ -434,8 +443,9 @@ An interactive message and a routine run take the same path from step 3 on.
 
 Policy is evaluated per **user × capability**, optionally narrowed by a
 **scope**: tools that declare a `ScopeArg` (the browser's `site`) pass that
-argument's normalized value (lowercase host, no `www.`), and a rule can be
-stored for (capability, scope).
+argument's normalized value (lowercase host, no `www.`), tools with a
+`ScopeFunc` (the browser's read tools: the current page) pass what it
+returns, and a rule can be stored for (capability, scope).
 
 ```yaml
 # defaults by risk level, applied when no explicit rule matches
@@ -456,8 +466,11 @@ users:
       email.delete: deny
 ```
 
-- Scoped rule (for the scope or a parent domain of it) > capability-wide
-  rule > risk default > `deny`. Unknown capabilities are denied.
+- Precedence: scoped rule (for the scope or a parent domain of it) >
+  capability-wide rule > the integration's default for the capability
+  (`Manifest.DefaultDecisions`, e.g. `browser.read: ask`) > risk default >
+  `deny`. Unknown capabilities are denied. `GET /v1/tools` and
+  `bosun tools` show the resulting decision per tool.
   `bosun policy set browser.act allow --scope opentable.com`.
 - A tool's `RiskFunc` may raise one call's risk (never lower it); the
   dispatcher then asks even if a rule says `allow` (an explicit `deny`

@@ -283,7 +283,11 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	engine := policy.NewEngine(d.store, policy.Options{
 		Defaults: defaults,
 		Known:    func(c integration.Capability) bool { return known[c] },
-		Log:      log,
+		CapabilityDefault: func(c integration.Capability) (policy.Decision, bool) {
+			d, ok := tools.CapabilityDefault(c)
+			return policy.Decision(d), ok
+		},
+		Log: log,
 	})
 	rep, err := policy.SeedRules(ctx, d.store, cfg.Users, policy.SeedOptions{Log: log})
 	if err != nil {

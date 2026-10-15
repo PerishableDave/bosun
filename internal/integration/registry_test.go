@@ -152,3 +152,42 @@ func TestRegisterChecksScopeArg(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 }
+
+func TestDefaultDecisions(t *testing.T) {
+	s := emailStub()
+	s.m.DefaultDecisions = map[Capability]string{"email.read": DefaultAsk}
+	r := NewRegistry()
+	if err := r.Register(s); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if d, ok := r.CapabilityDefault("email.read"); !ok || d != "ask" {
+		t.Errorf("CapabilityDefault(email.read) = %q, %v", d, ok)
+	}
+	if _, ok := r.CapabilityDefault("email.send"); ok {
+		t.Error("CapabilityDefault(email.send) reported a default")
+	}
+
+	bad := emailStub()
+	bad.m.DefaultDecisions = map[Capability]string{"email.delete": DefaultAsk}
+	if err := Validate(bad); err == nil || !strings.Contains(err.Error(), "not declared in manifest") {
+		t.Errorf("undeclared capability: %v", err)
+	}
+	bad.m.DefaultDecisions = map[Capability]string{"email.read": "maybe"}
+	if err := Validate(bad); err == nil || !strings.Contains(err.Error(), "must be") {
+		t.Errorf("invalid decision: %v", err)
+	}
+}
+
+func TestScopeArgAndScopeFuncExclusive(t *testing.T) {
+	s := emailStub()
+	s.tools[1].ScopeArg = "to"
+	s.tools[1].InputSchema = json.RawMessage(`{"type":"object","properties":{"to":{"type":"string"}}}`)
+	s.tools[1].ScopeFunc = func(context.Context, json.RawMessage) string { return "" }
+	if err := Validate(s); err == nil || !strings.Contains(err.Error(), "both ScopeArg and ScopeFunc") {
+		t.Errorf("err = %v", err)
+	}
+	s.tools[1].ScopeArg = ""
+	if err := Validate(s); err != nil {
+		t.Errorf("ScopeFunc alone: %v", err)
+	}
+}

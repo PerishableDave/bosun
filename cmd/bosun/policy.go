@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -73,31 +75,18 @@ func newPolicyCmd(g *globals) *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Defaults: read=%s write=%s destructive=%s\n", p.Defaults.Read, p.Defaults.Write, p.Defaults.Destructive)
-			if len(p.Rules) == 0 {
-				fmt.Fprintln(out, "No explicit rules.")
-				return nil
+			if err := printRules(out, p.Rules); err != nil {
+				return err
 			}
-			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			scoped := false
-			for _, r := range p.Rules {
-				scoped = scoped || r.Scope != ""
-			}
-			if !scoped {
-				fmt.Fprintln(tw, "CAPABILITY\tDECISION")
-				for _, r := range p.Rules {
-					fmt.Fprintf(tw, "%s\t%s\n", r.Capability, r.Decision)
+			if len(p.IntegrationDefaults) > 0 {
+				caps := make([]string, 0, len(p.IntegrationDefaults))
+				for c := range p.IntegrationDefaults {
+					caps = append(caps, c+"="+p.IntegrationDefaults[c])
 				}
-				return tw.Flush()
+				sort.Strings(caps)
+				fmt.Fprintf(out, "\nIntegration defaults (instead of the risk default when you have no rule): %s\n", strings.Join(caps, " "))
 			}
-			fmt.Fprintln(tw, "CAPABILITY\tSITE\tDECISION")
-			for _, r := range p.Rules {
-				scope := r.Scope
-				if scope == "" {
-					scope = "(any)"
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Capability, scope, r.Decision)
-			}
-			return tw.Flush()
+			return nil
 		},
 	})
 	var setScope, unsetScope string
@@ -106,7 +95,8 @@ func newPolicyCmd(g *globals) *cobra.Command {
 		Short: "Set your rule for a capability (optionally only on one site, with --scope)",
 		Long: "Set your rule for a capability. With --scope the rule applies only to calls on that site\n" +
 			"(and its subdomains), e.g. `bosun policy set browser.act allow --scope opentable.com`;\n" +
-			"a scoped rule beats the capability-wide rule, which beats the risk default.",
+			"a scoped rule beats the capability-wide rule, which beats the integration's default\n" +
+			"(e.g. browser.read asks), which beats the risk default.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			decision := strings.ToLower(args[1])
@@ -155,6 +145,35 @@ func newPolicyCmd(g *globals) *cobra.Command {
 	unset.Flags().StringVar(&unsetScope, "scope", "", "remove the rule for this site only")
 	cmd.AddCommand(unset)
 	return cmd
+}
+
+// printRules prints explicit rules as a table ("No explicit rules." if none).
+func printRules(out io.Writer, rules []api.PolicyRuleResponse) error {
+	if len(rules) == 0 {
+		fmt.Fprintln(out, "No explicit rules.")
+		return nil
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	scoped := false
+	for _, r := range rules {
+		scoped = scoped || r.Scope != ""
+	}
+	if !scoped {
+		fmt.Fprintln(tw, "CAPABILITY\tDECISION")
+		for _, r := range rules {
+			fmt.Fprintf(tw, "%s\t%s\n", r.Capability, r.Decision)
+		}
+		return tw.Flush()
+	}
+	fmt.Fprintln(tw, "CAPABILITY\tSITE\tDECISION")
+	for _, r := range rules {
+		scope := r.Scope
+		if scope == "" {
+			scope = "(any)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Capability, scope, r.Decision)
+	}
+	return tw.Flush()
 }
 
 // scopeQuery returns "?scope=<site>" or "".

