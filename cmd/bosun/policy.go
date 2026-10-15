@@ -78,17 +78,36 @@ func newPolicyCmd(g *globals) *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "CAPABILITY\tDECISION")
+			scoped := false
 			for _, r := range p.Rules {
-				fmt.Fprintf(tw, "%s\t%s\n", r.Capability, r.Decision)
+				scoped = scoped || r.Scope != ""
+			}
+			if !scoped {
+				fmt.Fprintln(tw, "CAPABILITY\tDECISION")
+				for _, r := range p.Rules {
+					fmt.Fprintf(tw, "%s\t%s\n", r.Capability, r.Decision)
+				}
+				return tw.Flush()
+			}
+			fmt.Fprintln(tw, "CAPABILITY\tSITE\tDECISION")
+			for _, r := range p.Rules {
+				scope := r.Scope
+				if scope == "" {
+					scope = "(any)"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Capability, scope, r.Decision)
 			}
 			return tw.Flush()
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	var setScope, unsetScope string
+	set := &cobra.Command{
 		Use:   "set <capability> allow|ask|deny",
-		Short: "Set your rule for a capability",
-		Args:  cobra.ExactArgs(2),
+		Short: "Set your rule for a capability (optionally only on one site, with --scope)",
+		Long: "Set your rule for a capability. With --scope the rule applies only to calls on that site\n" +
+			"(and its subdomains), e.g. `bosun policy set browser.act allow --scope opentable.com`;\n" +
+			"a scoped rule beats the capability-wide rule, which beats the risk default.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			decision := strings.ToLower(args[1])
 			if decision != "allow" && decision != "ask" && decision != "deny" {
@@ -99,15 +118,21 @@ func newPolicyCmd(g *globals) *cobra.Command {
 				return err
 			}
 			var r api.PolicyRuleResponse
-			if err := call(cmd.Context(), "PUT", base+"/v1/policy/"+url.PathEscape(args[0]), tok,
+			if err := call(cmd.Context(), "PUT", base+"/v1/policy/"+url.PathEscape(args[0])+scopeQuery(setScope), tok,
 				api.SetPolicyRuleRequest{Decision: decision}, &r); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", r.Capability, r.Decision)
+			if r.Scope != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s on %s: %s\n", r.Capability, r.Scope, r.Decision)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", r.Capability, r.Decision)
+			}
 			return nil
 		},
-	})
-	cmd.AddCommand(&cobra.Command{
+	}
+	set.Flags().StringVar(&setScope, "scope", "", "limit the rule to one site, e.g. opentable.com")
+	cmd.AddCommand(set)
+	unset := &cobra.Command{
 		Use:   "unset <capability>",
 		Short: "Remove your rule for a capability (the risk default applies again)",
 		Args:  cobra.ExactArgs(1),
@@ -116,12 +141,26 @@ func newPolicyCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := call(cmd.Context(), "DELETE", base+"/v1/policy/"+url.PathEscape(args[0]), tok, nil, nil); err != nil {
+			if err := call(cmd.Context(), "DELETE", base+"/v1/policy/"+url.PathEscape(args[0])+scopeQuery(unsetScope), tok, nil, nil); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: rule removed (risk default applies)\n", args[0])
+			if unsetScope != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s on %s: rule removed\n", args[0], unsetScope)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: rule removed (risk default applies)\n", args[0])
+			}
 			return nil
 		},
-	})
+	}
+	unset.Flags().StringVar(&unsetScope, "scope", "", "remove the rule for this site only")
+	cmd.AddCommand(unset)
 	return cmd
+}
+
+// scopeQuery returns "?scope=<site>" or "".
+func scopeQuery(scope string) string {
+	if scope == "" {
+		return ""
+	}
+	return "?scope=" + url.QueryEscape(scope)
 }
