@@ -69,6 +69,12 @@ type (
 		Args           json.RawMessage `json:"args"`
 		Risk           string          `json:"risk"`
 		ConversationID string          `json:"conversation_id,omitempty"`
+		// Scope is the call's normalized scope (e.g. a site); when set,
+		// clients may offer "approve and always allow on <scope>".
+		Scope string `json:"scope,omitempty"`
+		// HasPreview: GET /v1/approvals/{id}/preview serves an image of
+		// what the call will do.
+		HasPreview bool `json:"has_preview,omitempty"`
 	}
 	// ApprovalResolvedData reports an approval's outcome to all clients.
 	ApprovalResolvedData struct {

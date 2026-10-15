@@ -23,6 +23,9 @@ type Store interface {
 	ListPolicyRules(ctx context.Context, userID int64) ([]*store.PolicyRule, error)
 	UpsertPolicyRule(ctx context.Context, userID int64, capability, decision string, condition json.RawMessage) (*store.PolicyRule, error)
 	DeletePolicyRule(ctx context.Context, userID int64, capability string) error
+	GetScopedPolicyRule(ctx context.Context, userID int64, capability, scope string) (*store.PolicyRule, error)
+	UpsertScopedPolicyRule(ctx context.Context, userID int64, capability, scope, decision string, condition json.RawMessage) (*store.PolicyRule, error)
+	DeleteScopedPolicyRule(ctx context.Context, userID int64, capability, scope string) error
 }
 
 var _ Store = (*store.Store)(nil)
@@ -52,7 +55,10 @@ type Options struct {
 
 // StoreEngine is the database-backed Engine.
 //
-// Precedence: explicit per-user rule > risk default > Deny. It reads the
+// Precedence: scoped rule (capability, scope) > capability-wide rule
+// (capability, "") > risk default > Deny. A scoped lookup tries the scope
+// and then its parent domains (integration.ScopeCandidates), so a rule for
+// "opentable.com" covers "m.opentable.com". It reads the
 // user and rule from the store on every call: there is no cache, so a rule
 // change takes effect on the very next Decide. (Two indexed point lookups per
 // tool call are negligible next to an LLM round trip.)
@@ -67,7 +73,10 @@ type StoreEngine struct {
 	log   *slog.Logger
 }
 
-var _ Engine = (*StoreEngine)(nil)
+var (
+	_ Engine       = (*StoreEngine)(nil)
+	_ ScopedEngine = (*StoreEngine)(nil)
+)
 
 // NewEngine returns a StoreEngine.
 func NewEngine(st Store, opts Options) *StoreEngine {
@@ -90,11 +99,16 @@ func DefaultsFromConfig(c config.PolicyDefaults) (Defaults, error) {
 	return d, nil
 }
 
-// Decide implements Engine.
-func (e *StoreEngine) Decide(ctx context.Context, userID int64, c integration.Capability, risk integration.Risk, _ json.RawMessage) Decision {
+// Decide implements Engine. It is DecideScoped with no scope.
+func (e *StoreEngine) Decide(ctx context.Context, userID int64, c integration.Capability, risk integration.Risk, args json.RawMessage) Decision {
+	return e.DecideScoped(ctx, userID, c, "", risk, args)
+}
+
+// DecideScoped implements ScopedEngine.
+func (e *StoreEngine) DecideScoped(ctx context.Context, userID int64, c integration.Capability, scope string, risk integration.Risk, _ json.RawMessage) Decision {
 	deny := func(reason string, args ...any) Decision {
 		e.log.WarnContext(ctx, "policy: deny (fail closed)",
-			append([]any{"reason", reason, "user_id", userID, "capability", string(c), "risk", string(risk)}, args...)...)
+			append([]any{"reason", reason, "user_id", userID, "capability", string(c), "scope", scope, "risk", string(risk)}, args...)...)
 		return Deny
 	}
 	if userID <= 0 {
@@ -122,9 +136,7 @@ func (e *StoreEngine) Decide(ctx context.Context, userID int64, c integration.Ca
 	if u.Disabled {
 		return deny("user disabled")
 	}
-	r, err := e.st.GetPolicyRule(ctx, userID, string(c))
-	switch {
-	case err == nil:
+	ruleDecision := func(r *store.PolicyRule) Decision {
 		if hasCondition(r.Condition) {
 			return deny("rule has a condition; conditions are not supported in v1", "rule_id", r.ID)
 		}
@@ -133,6 +145,21 @@ func (e *StoreEngine) Decide(ctx context.Context, userID int64, c integration.Ca
 			return deny("stored rule has invalid decision", "rule_id", r.ID, "decision", r.Decision)
 		}
 		return d
+	}
+	for _, sc := range integration.ScopeCandidates(scope) {
+		r, err := e.st.GetScopedPolicyRule(ctx, userID, string(c), sc)
+		switch {
+		case err == nil:
+			return ruleDecision(r)
+		case errors.Is(err, store.ErrNotFound):
+		default:
+			return deny("store error reading scoped rule", "err", err)
+		}
+	}
+	r, err := e.st.GetPolicyRule(ctx, userID, string(c))
+	switch {
+	case err == nil:
+		return ruleDecision(r)
 	case errors.Is(err, store.ErrNotFound):
 		return e.def.ForRisk(risk)
 	default:
@@ -146,7 +173,7 @@ func hasCondition(c json.RawMessage) bool {
 
 func toRule(r *store.PolicyRule) Rule {
 	return Rule{
-		ID: r.ID, UserID: r.UserID, Capability: integration.Capability(r.Capability), Decision: Decision(r.Decision),
+		ID: r.ID, UserID: r.UserID, Capability: integration.Capability(r.Capability), Scope: r.Scope, Decision: Decision(r.Decision),
 		Condition: r.Condition, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -175,7 +202,42 @@ func (e *StoreEngine) DeleteRule(ctx context.Context, userID int64, c integratio
 	return nil
 }
 
-// ListRules returns userID's explicit rules ordered by capability.
+// ValidScope reports whether s is a normalized, non-empty scope (see
+// integration.NormalizeScope).
+func ValidScope(s string) bool { return s != "" && integration.NormalizeScope(s) == s }
+
+// SetScopedRule creates or replaces userID's rule for c limited to scope.
+// An empty scope is the capability-wide rule (SetRule); a non-empty scope
+// must be normalized (ValidScope).
+func (e *StoreEngine) SetScopedRule(ctx context.Context, userID int64, c integration.Capability, scope string, d Decision) (Rule, error) {
+	if scope != "" && !ValidScope(scope) {
+		return Rule{}, fmt.Errorf("set rule: scope %q: %w", scope, ErrInvalid)
+	}
+	if !ValidCapability(c) {
+		return Rule{}, fmt.Errorf("set rule: capability %q: %w", c, ErrInvalid)
+	}
+	if !d.Valid() {
+		return Rule{}, fmt.Errorf("set rule: decision %q: %w", d, ErrInvalid)
+	}
+	r, err := e.st.UpsertScopedPolicyRule(ctx, userID, string(c), scope, string(d), nil)
+	if err != nil {
+		return Rule{}, fmt.Errorf("set rule: %w", err)
+	}
+	return toRule(r), nil
+}
+
+// DeleteScopedRule removes userID's rule for c limited to scope ("" is the
+// capability-wide rule). Returns an error wrapping store.ErrNotFound if
+// there was no such rule.
+func (e *StoreEngine) DeleteScopedRule(ctx context.Context, userID int64, c integration.Capability, scope string) error {
+	if err := e.st.DeleteScopedPolicyRule(ctx, userID, string(c), scope); err != nil {
+		return fmt.Errorf("delete rule: %w", err)
+	}
+	return nil
+}
+
+// ListRules returns userID's explicit rules ordered by capability, then
+// scope (capability-wide first).
 func (e *StoreEngine) ListRules(ctx context.Context, userID int64) ([]Rule, error) {
 	rs, err := e.st.ListPolicyRules(ctx, userID)
 	if err != nil {

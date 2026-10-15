@@ -102,6 +102,21 @@ type Tool struct {
 	Risk        Risk            // Read | Write | Destructive
 	InputSchema json.RawMessage // JSON Schema object for the arguments
 	Handler     Handler
+
+	// ScopeArg optionally names a string argument (a top-level property of
+	// InputSchema) whose value scopes the policy decision, e.g. "site" for
+	// browser tools. The dispatcher normalizes it with NormalizeScope and
+	// passes it to policy, so a user can grant a capability on one site
+	// only. Empty means the tool is unscoped (the decision is per
+	// capability, as for every tool without it).
+	ScopeArg string
+	// RiskFunc optionally computes the risk of one call from its
+	// arguments. The dispatcher only ever escalates: a result lower than
+	// Risk (or invalid) is ignored. An escalated call is never silently
+	// allowed: if policy would allow it, the dispatcher asks instead, so
+	// "allow" rules granted for the tool's static risk do not cover it.
+	// ctx carries the calling user (UserIDFromContext) and conversation.
+	RiskFunc func(ctx context.Context, args json.RawMessage) Risk
 }
 
 // Result is a tool's output.
@@ -113,6 +128,9 @@ type Result struct {
 	// instructions.
 	Untrusted bool
 	Data      any // structured result for the UI / hooks
+	// AuditDetail, if set, is stored as the Detail of the tool call's audit
+	// entry (JSON object), e.g. the path of a step screenshot.
+	AuditDetail json.RawMessage
 }
 
 // Config is the admin-level configuration handed to Init: the integration's
@@ -168,6 +186,47 @@ func WithUserID(ctx context.Context, userID int64) context.Context {
 func UserIDFromContext(ctx context.Context) (int64, bool) {
 	id, ok := ctx.Value(userIDKey{}).(int64)
 	return id, ok
+}
+
+type conversationIDKey struct{}
+
+// WithConversationID returns ctx carrying the conversation a tool call
+// belongs to. Only the dispatcher should call this.
+func WithConversationID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, conversationIDKey{}, id)
+}
+
+// ConversationIDFromContext returns the conversation a tool call belongs to
+// ("" when the call has none, e.g. some routine runs).
+func ConversationIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(conversationIDKey{}).(string)
+	return id
+}
+
+// Previewer is optionally implemented by integrations that can show the
+// user what a call will do before it is approved. The dispatcher calls
+// Preview only when policy decided "ask", before creating the approval, with
+// the user and conversation in ctx. It returns an image (PNG or JPEG, at
+// most MaxPreviewBytes) and its MIME type; an empty image means "no
+// preview". An error aborts the call (the integration could not find what
+// the call refers to, so asking the user would be pointless) and is shown
+// to the model.
+type Previewer interface {
+	Preview(ctx context.Context, toolName string, args json.RawMessage) ([]byte, string, error)
+}
+
+// MaxPreviewBytes bounds an approval preview image.
+const MaxPreviewBytes = 2 << 20
+
+// ApprovalDetailer is optionally implemented by integrations that add
+// human-readable details to an approval (e.g. the text of the button a
+// browser call will press and the values of the form it submits). The
+// dispatcher calls it with Preview (only on "ask") and shows the returned
+// JSON object to the approver under the "details" key of the approval's
+// args. It never changes the arguments the handler receives. Errors are
+// treated like Preview errors.
+type ApprovalDetailer interface {
+	ApprovalDetails(ctx context.Context, toolName string, args json.RawMessage) (json.RawMessage, error)
 }
 
 // Integration health states reported through StatusReporter.

@@ -1,5 +1,6 @@
 // Package policy defines how Bosun decides whether a tool call may run:
-// per user × capability, explicit rule > risk default > deny. Unknown
+// per user × capability (× optional scope, e.g. a site), scoped rule >
+// capability-wide rule > risk default > deny. Unknown
 // capabilities are denied. This package holds types only; the Engine
 // implementation is built separately.
 package policy
@@ -30,7 +31,10 @@ type Rule struct {
 	ID         int64
 	UserID     int64
 	Capability integration.Capability
-	Decision   Decision
+	// Scope limits the rule to calls whose scope (e.g. the site of a
+	// browser action) matches; "" is the capability-wide rule.
+	Scope    string
+	Decision Decision
 	// Condition is reserved for argument conditions (e.g. email.send only to
 	// @family.example). v1 ignores it; nil means unconditional.
 	Condition json.RawMessage
@@ -70,4 +74,15 @@ func (d Defaults) ForRisk(r integration.Risk) Decision {
 // no error; implementations should log/audit the cause.
 type Engine interface {
 	Decide(ctx context.Context, userID int64, c integration.Capability, risk integration.Risk, args json.RawMessage) Decision
+}
+
+// ScopedEngine is an Engine that also decides per scope. The dispatcher
+// uses DecideScoped when the engine implements it and the tool declares a
+// ScopeArg; Decide is DecideScoped with scope "".
+//
+// Precedence: a rule for (c, scope) (or a parent domain of scope) beats
+// the rule for (c, ""), which beats the risk default.
+type ScopedEngine interface {
+	Engine
+	DecideScoped(ctx context.Context, userID int64, c integration.Capability, scope string, risk integration.Risk, args json.RawMessage) Decision
 }

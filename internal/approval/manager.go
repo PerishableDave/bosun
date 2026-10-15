@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +65,13 @@ type Options struct {
 	// is persisted and published, so it must not block; panics are
 	// recovered. The daemon wires it to the on_approval hooks.
 	OnResolve func(ctx context.Context, a Approval, d Decision)
+	// PreviewDir is where preview images are kept while approvals are
+	// pending ($data_dir/approvals). Empty disables previews.
+	PreviewDir string
+	// AllowScope, if set, creates the user's "allow" rule for (capability,
+	// scope); ResolveAlways calls it before approving. The daemon wires it
+	// to the policy engine.
+	AllowScope func(ctx context.Context, userID int64, c integration.Capability, scope string) error
 }
 
 // StoreManager is the database-backed Manager. Approvals are persisted, so
@@ -76,6 +87,8 @@ type StoreManager struct {
 	log     *slog.Logger
 	poll    time.Duration
 	onRes   func(ctx context.Context, a Approval, d Decision)
+	preview string
+	allow   func(ctx context.Context, userID int64, c integration.Capability, scope string) error
 
 	mu      sync.Mutex
 	waiters map[string]chan struct{} // closed (and removed) when the approval changes state
@@ -86,7 +99,7 @@ var _ Manager = (*StoreManager)(nil)
 // NewManager returns a StoreManager. bus may be nil (no events).
 func NewManager(st Store, bus events.Publisher, opts Options) *StoreManager {
 	m := &StoreManager{st: st, bus: bus, timeout: opts.Timeout, aud: opts.Audit, log: opts.Log, poll: opts.PollInterval,
-		onRes: opts.OnResolve, waiters: map[string]chan struct{}{}}
+		onRes: opts.OnResolve, waiters: map[string]chan struct{}{}, preview: opts.PreviewDir, allow: opts.AllowScope}
 	if m.timeout <= 0 {
 		m.timeout = DefaultTimeout
 	}
@@ -102,7 +115,7 @@ func NewManager(st Store, bus events.Publisher, opts Options) *StoreManager {
 func fromStore(a *store.Approval) *Approval {
 	return &Approval{
 		ID: a.ID, UserID: a.UserID, ConversationID: a.ConversationID, ToolCallID: a.ToolCallID, Tool: a.Tool,
-		Capability: integration.Capability(a.Capability), Risk: integration.Risk(a.Risk), Args: a.Args,
+		Capability: integration.Capability(a.Capability), Risk: integration.Risk(a.Risk), Scope: a.Scope, Args: a.Args,
 		Status: Status(a.Status), CreatedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt, ResolvedAt: a.ResolvedAt,
 		ResolvedBy: a.ResolvedBy,
 	}
@@ -122,17 +135,201 @@ func (m *StoreManager) Request(ctx context.Context, p Params) (*Approval, error)
 	}
 	a, err := m.st.CreateApproval(ctx, store.Approval{
 		UserID: p.UserID, ConversationID: p.ConversationID, ToolCallID: p.ToolCallID, Tool: p.Tool,
-		Capability: string(p.Capability), Risk: string(p.Risk), Args: p.Args, ExpiresAt: time.Now().Add(timeout),
+		Capability: string(p.Capability), Risk: string(p.Risk), Scope: p.Scope, Args: p.Args, ExpiresAt: time.Now().Add(timeout),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("approval: request: %w", err)
 	}
 	out := fromStore(a)
-	m.record(ctx, out, "ask", 0, "approval requested")
+	note := "approval requested"
+	if len(p.Preview) > 0 {
+		if err := m.writePreview(out.ID, p.Preview, p.PreviewMIME); err != nil {
+			m.log.Warn("approval: preview not stored", "approval_id", out.ID, "err", err)
+			note += "; preview not stored: " + err.Error()
+		} else {
+			out.HasPreview = true
+			note += " with preview"
+		}
+	}
+	m.record(ctx, out, "ask", 0, note)
 	m.publish(out.UserID, events.Event{Type: events.TypeApprovalRequired, Data: events.ApprovalRequiredData{
 		ApprovalID: out.ID, Tool: out.Tool, Args: out.Args, Risk: string(out.Risk), ConversationID: out.ConversationID,
+		Scope: out.Scope, HasPreview: out.HasPreview,
 	}})
 	return out, nil
+}
+
+// --- previews ---
+
+var previewExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg"}
+
+// approvalIDRe matches the IDs store.NewID("appr_") generates; anything else
+// is never turned into a file name.
+var approvalIDRe = regexp.MustCompile(`^appr_[0-9a-f]{8,64}$`)
+
+func (m *StoreManager) writePreview(id string, img []byte, mime string) error {
+	if m.preview == "" {
+		return errors.New("previews are not enabled")
+	}
+	ext, ok := previewExt[mime]
+	if !ok {
+		return fmt.Errorf("unsupported preview type %q", mime)
+	}
+	if len(img) > MaxPreviewBytes {
+		return fmt.Errorf("preview is %d bytes (limit %d)", len(img), MaxPreviewBytes)
+	}
+	if !approvalIDRe.MatchString(id) {
+		return fmt.Errorf("unexpected approval id %q", id)
+	}
+	if err := os.MkdirAll(m.preview, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(m.preview, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(img); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(m.preview, id+ext))
+}
+
+// previewPath returns the stored preview of id and its MIME type.
+func (m *StoreManager) previewPath(id string) (string, string, bool) {
+	if m.preview == "" || !approvalIDRe.MatchString(id) {
+		return "", "", false
+	}
+	for mime, ext := range previewExt {
+		p := filepath.Join(m.preview, id+ext)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			return p, mime, true
+		}
+	}
+	return "", "", false
+}
+
+func (m *StoreManager) removePreview(id string) {
+	if m.preview == "" || !approvalIDRe.MatchString(id) {
+		return
+	}
+	for _, ext := range previewExt {
+		if err := os.Remove(filepath.Join(m.preview, id+ext)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			m.log.Warn("approval: remove preview", "approval_id", id, "err", err)
+		}
+	}
+}
+
+// PreviewFile returns the path and MIME type of a pending approval's
+// preview image. Only the owner may read it (ErrNotFound otherwise, to
+// avoid leaking existence); ErrNoPreview if there is none (or the approval
+// is no longer pending: previews are deleted on resolution).
+func (m *StoreManager) PreviewFile(ctx context.Context, id string, userID int64) (string, string, error) {
+	a, err := m.Get(ctx, id, userID)
+	if err != nil {
+		return "", "", err
+	}
+	if a.Status != StatusPending {
+		return "", "", ErrNoPreview
+	}
+	p, mime, ok := m.previewPath(a.ID)
+	if !ok {
+		return "", "", ErrNoPreview
+	}
+	return p, mime, nil
+}
+
+// SweepPreviews deletes preview files whose approval is no longer pending
+// (or no longer exists), e.g. left behind by a crash. The daemon runs it at
+// startup and periodically. It returns how many files it removed.
+func (m *StoreManager) SweepPreviews(ctx context.Context) (int, error) {
+	if m.preview == "" {
+		return 0, nil
+	}
+	ents, err := os.ReadDir(m.preview)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("approval: sweep previews: %w", err)
+	}
+	n := 0
+	for _, e := range ents {
+		name := e.Name()
+		p := filepath.Join(m.preview, name)
+		if strings.HasPrefix(name, ".tmp-") {
+			if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > time.Hour {
+				if os.Remove(p) == nil {
+					n++
+				}
+			}
+			continue
+		}
+		id := strings.TrimSuffix(name, filepath.Ext(name))
+		if !approvalIDRe.MatchString(id) || previewExt[mimeOfExt(filepath.Ext(name))] == "" {
+			continue // not ours; leave it
+		}
+		a, err := m.st.GetApproval(ctx, id)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return n, fmt.Errorf("approval: sweep previews: %w", err)
+		}
+		if err == nil && a.Status == store.ApprovalPending && time.Now().Before(a.ExpiresAt) {
+			continue
+		}
+		if err := os.Remove(p); err == nil {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func mimeOfExt(ext string) string {
+	for mime, e := range previewExt {
+		if e == ext {
+			return mime
+		}
+	}
+	return ""
+}
+
+// ResolveAlways creates userID's "allow" rule for the approval's
+// (capability, scope) and then approves it: "approve and always allow on
+// <scope>". It requires a scoped approval (ErrNoScope) that is still
+// pending and owned by userID (same errors as Resolve). The rule is created
+// only after those checks, so a stale or foreign approval never creates
+// one.
+func (m *StoreManager) ResolveAlways(ctx context.Context, id string, userID int64) error {
+	cur, err := m.st.GetApproval(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("approval: resolve: %w", err)
+	}
+	if cur.UserID != userID || userID <= 0 {
+		return ErrForbidden
+	}
+	switch {
+	case cur.Status == store.ApprovalExpired, cur.Status == store.ApprovalPending && !time.Now().Before(cur.ExpiresAt):
+		return ErrExpired
+	case cur.Status != store.ApprovalPending:
+		return ErrAlreadyResolved
+	}
+	if cur.Scope == "" {
+		return ErrNoScope
+	}
+	if m.allow == nil {
+		return errors.New("approval: always-allow is not available")
+	}
+	if err := m.allow(ctx, userID, integration.Capability(cur.Capability), cur.Scope); err != nil {
+		return fmt.Errorf("approval: always allow: %w", err)
+	}
+	return m.Resolve(ctx, id, userID, Approve)
 }
 
 // Get returns an approval by ID, enforcing ownership (ErrNotFound if userID
@@ -145,7 +342,15 @@ func (m *StoreManager) Get(ctx context.Context, id string, userID int64) (*Appro
 	if err != nil {
 		return nil, fmt.Errorf("approval: get: %w", err)
 	}
-	return fromStore(a), nil
+	return m.decorate(fromStore(a)), nil
+}
+
+// decorate fills HasPreview.
+func (m *StoreManager) decorate(a *Approval) *Approval {
+	if a.Status == StatusPending {
+		_, _, a.HasPreview = m.previewPath(a.ID)
+	}
+	return a
 }
 
 // waiter returns the channel that will be closed on the next state change of id.
@@ -236,6 +441,7 @@ func (m *StoreManager) cancel(id string, cause error) error {
 	defer done()
 	a, err := m.st.ResolveApproval(ctx, id, store.ApprovalCanceled, 0)
 	if err == nil {
+		m.removePreview(id)
 		out := fromStore(a)
 		m.record(ctx, out, DecisionCanceled, 0, "waiting run went away")
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
@@ -288,6 +494,7 @@ func (m *StoreManager) Resolve(ctx context.Context, id string, userID int64, d D
 	if err != nil {
 		return fmt.Errorf("approval: resolve: %w", err)
 	}
+	m.removePreview(id)
 	out := fromStore(a)
 	m.record(ctx, out, string(d), userID, "")
 	m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,
@@ -305,7 +512,7 @@ func (m *StoreManager) ListPending(ctx context.Context, userID int64) ([]*Approv
 	}
 	out := make([]*Approval, 0, len(as))
 	for _, a := range as {
-		out = append(out, fromStore(a))
+		out = append(out, m.decorate(fromStore(a)))
 	}
 	return out, nil
 }
@@ -319,6 +526,7 @@ func (m *StoreManager) ExpireStale(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("approval: expire: %w", err)
 	}
 	for _, a := range as {
+		m.removePreview(a.ID)
 		out := fromStore(a)
 		m.record(ctx, out, DecisionExpired, 0, "approval timed out")
 		m.publish(out.UserID, events.Event{Type: events.TypeApprovalResolved,

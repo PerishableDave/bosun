@@ -96,6 +96,9 @@ func Validate(i Integration) error {
 		if len(t.InputSchema) > 0 && !json.Valid(t.InputSchema) {
 			add("tool %q input schema is not valid JSON", t.Name)
 		}
+		if t.ScopeArg != "" && !schemaHasProperty(t.InputSchema, t.ScopeArg) {
+			add("tool %q scope argument %q is not a property of its input schema", t.Name, t.ScopeArg)
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -163,4 +166,17 @@ func (r *Registry) Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// schemaHasProperty reports whether a JSON Schema object declares a
+// top-level property name.
+func schemaHasProperty(schema json.RawMessage, name string) bool {
+	var s struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if len(schema) == 0 || json.Unmarshal(schema, &s) != nil {
+		return false
+	}
+	_, ok := s.Properties[name]
+	return ok
 }

@@ -26,6 +26,7 @@ type Approval struct {
 	Tool           string
 	Capability     string
 	Risk           string
+	Scope          string // the call's normalized scope ("" if unscoped)
 	Args           json.RawMessage
 	Status         string
 	CreatedAt      time.Time
@@ -35,7 +36,7 @@ type Approval struct {
 }
 
 const approvalCols = `id, user_id, conversation_id, tool_call_id, tool, capability, risk, args, status,
-	created_at, expires_at, resolved_at, resolved_by`
+	created_at, expires_at, resolved_at, resolved_by, scope`
 
 func scanApproval(r interface{ Scan(...any) error }) (*Approval, error) {
 	var a Approval
@@ -44,7 +45,7 @@ func scanApproval(r interface{ Scan(...any) error }) (*Approval, error) {
 	var c, e int64
 	var resAt, resBy sql.NullInt64
 	if err := r.Scan(&a.ID, &a.UserID, &conv, &a.ToolCallID, &a.Tool, &a.Capability, &a.Risk, &args, &a.Status,
-		&c, &e, &resAt, &resBy); err != nil {
+		&c, &e, &resAt, &resBy, &a.Scope); err != nil {
 		return nil, notFound(err)
 	}
 	a.ConversationID, a.Args = conv.String, json.RawMessage(args)
@@ -68,10 +69,10 @@ func (s *Store) CreateApproval(ctx context.Context, a Approval) (*Approval, erro
 	a.CreatedAt = fromMS(ms(s.now()))
 	a.ExpiresAt = fromMS(ms(a.ExpiresAt))
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO approvals(id, user_id, conversation_id, tool_call_id, tool, capability, risk, args, status, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO approvals(id, user_id, conversation_id, tool_call_id, tool, capability, risk, args, status, created_at, expires_at, scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.UserID, nullStr(a.ConversationID), a.ToolCallID, a.Tool, a.Capability, a.Risk, string(a.Args),
-		a.Status, ms(a.CreatedAt), ms(a.ExpiresAt))
+		a.Status, ms(a.CreatedAt), ms(a.ExpiresAt), a.Scope)
 	if isUniqueViolation(err) {
 		return nil, fmt.Errorf("create approval: %w", ErrConflict)
 	}

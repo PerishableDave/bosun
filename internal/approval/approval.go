@@ -46,12 +46,19 @@ type Approval struct {
 	Tool           string                 `json:"tool"`
 	Capability     integration.Capability `json:"capability"`
 	Risk           integration.Risk       `json:"risk"`
-	Args           json.RawMessage        `json:"args"`
-	Status         Status                 `json:"status"`
-	CreatedAt      time.Time              `json:"created_at"`
-	ExpiresAt      time.Time              `json:"expires_at"`
-	ResolvedAt     time.Time              `json:"resolved_at,omitzero"`
-	ResolvedBy     int64                  `json:"resolved_by,omitempty"`
+	// Scope is the call's normalized scope (e.g. a site), "" if the tool is
+	// unscoped. Clients offer "approve and always allow on <scope>" when it
+	// is set.
+	Scope      string          `json:"scope,omitempty"`
+	Args       json.RawMessage `json:"args"`
+	Status     Status          `json:"status"`
+	CreatedAt  time.Time       `json:"created_at"`
+	ExpiresAt  time.Time       `json:"expires_at"`
+	ResolvedAt time.Time       `json:"resolved_at,omitzero"`
+	ResolvedBy int64           `json:"resolved_by,omitempty"`
+	// HasPreview is true while a preview image is available from
+	// GET /v1/approvals/{id}/preview (pending approvals only).
+	HasPreview bool `json:"has_preview,omitempty"`
 }
 
 // Params describe a new approval request.
@@ -65,7 +72,18 @@ type Params struct {
 	Args           json.RawMessage
 	// Timeout overrides the configured policy.approval_timeout when > 0.
 	Timeout time.Duration
+	// Scope is the call's normalized scope ("" if unscoped).
+	Scope string
+	// Preview is an optional image showing what the call will do (e.g. a
+	// screenshot with the target highlighted), at most MaxPreviewBytes, of
+	// type PreviewMIME ("image/png" or "image/jpeg"). It is kept on disk,
+	// not in the database, while the approval is pending.
+	Preview     []byte
+	PreviewMIME string
 }
+
+// MaxPreviewBytes bounds Params.Preview; larger previews are dropped.
+const MaxPreviewBytes = integration.MaxPreviewBytes
 
 // Errors returned by Manager implementations.
 var (
@@ -73,6 +91,10 @@ var (
 	ErrAlreadyResolved = errors.New("approval: already resolved") // first answer wins
 	ErrExpired         = errors.New("approval: expired")
 	ErrForbidden       = errors.New("approval: not owned by user")
+	// ErrNoScope: "always allow" was requested for an unscoped approval.
+	ErrNoScope = errors.New("approval: approval has no scope")
+	// ErrNoPreview: the approval has no preview (or it was removed).
+	ErrNoPreview = errors.New("approval: no preview")
 )
 
 // Manager creates approvals, delivers them to the user's clients (as

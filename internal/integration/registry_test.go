@@ -140,3 +140,15 @@ func TestContextUserAndConfigDecode(t *testing.T) {
 		t.Errorf("Decode = %+v, %v", v, err)
 	}
 }
+
+func TestRegisterChecksScopeArg(t *testing.T) {
+	s := emailStub()
+	s.tools[1].ScopeArg = "site"
+	if err := NewRegistry().Register(s); err == nil || !strings.Contains(err.Error(), "scope argument") {
+		t.Fatalf("err = %v", err)
+	}
+	s.tools[1].InputSchema = json.RawMessage(`{"type":"object","properties":{"site":{"type":"string"}}}`)
+	if err := NewRegistry().Register(s); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+}
