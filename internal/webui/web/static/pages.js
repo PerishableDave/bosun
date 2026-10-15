@@ -47,10 +47,7 @@ export async function renderTools(el) {
   });
 
   const d = rules.defaults || {};
-  const accounts = h("section", { class: "accounts" }, h("p", { class: "muted" }, "Loading accounts…"));
-  renderAccounts(accounts);
   el.replaceChildren(
-    accounts,
     h("h2", {}, "Tools"),
     h("p", { class: "muted small" }, `Defaults: read ${d.read}, write ${d.write}, destructive ${d.destructive}. A custom rule overrides the default for that tool.`),
     msg,
@@ -71,7 +68,9 @@ function describeCredential(c) {
   return c.integration + " · " + c.kind;
 }
 
-async function renderAccounts(el) {
+// renderAccounts is the Accounts page: linked accounts and how to add one.
+export async function renderAccounts(el) {
+  el.replaceChildren(h("p", { class: "muted" }, "Loading accounts…"));
   const get = (path) => api("GET", path).catch(() => null);
   const [creds, oauth] = await Promise.all([get("/v1/credentials"), get("/v1/oauth")]);
   const rows = [];
