@@ -30,6 +30,10 @@ local models via Ollama.
   login before saving it.
 - **Notes, web search and fetch,** and any [MCP](https://modelcontextprotocol.io)
   server's tools, each under the same policy and approval gate.
+- **A contained web browser** (opt-in): a private headless Chromium per user
+  that can read pages, fill forms and click through sites you allow, while
+  anything that books, buys, sends or saves waits for your approval with a
+  screenshot of exactly what it will press.
 - **Any model:** Anthropic, any OpenAI-compatible API, or local models through
   Ollama. Switching is a config change.
 - **Memory** you can list, edit and delete; **routines** that run prompts on a
@@ -152,6 +156,7 @@ key comes from.
 | `bosun chat [message]` | talk to your assistant (interactive, or one message) |
 | `bosun tools`, `bosun policy` | what the assistant can do; your allow/ask/deny rules |
 | `bosun approvals` | list and answer pending approvals |
+| `bosun browser status\|stop\|screenshot` | what the assistant's browser is doing; stop it |
 | `bosun connect email\|calendar\|google\|microsoft` | link accounts |
 | `bosun credentials` | manage secrets in the encrypted vault |
 | `bosun memory`, `bosun routines` | what it remembers; scheduled and event-driven prompts |
@@ -178,6 +183,18 @@ write: ask, destructive: ask). "ask" pauses the tool call until you answer;
 ./bin/bosun policy list
 ./bin/bosun policy unset websearch.fetch      # back to the risk default
 ```
+
+Some tools act on a site (the browser's). Their rules can be limited to one
+site, which beats the capability-wide rule:
+
+```sh
+./bin/bosun policy set browser.act allow --scope opentable.com   # only there
+./bin/bosun policy unset browser.act --scope opentable.com
+```
+
+Approvals for such tools also offer **Approve and always allow on <site>**
+(web UI, Telegram, `a` in `bosun chat`, or
+`bosun approvals <id> approve --always`), which creates that rule for you.
 
 ### Web UI
 
@@ -455,6 +472,81 @@ integrations:
 - Paths are relative to the notes folder. Absolute paths, `..`, hidden
   files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
   point outside the folder are refused. Reads return at most 200 KB.
+
+### Browser
+
+The `browser` integration gives your assistant its own web browser: a private,
+headless Chromium per user, with its own profile (sign-ins you make there
+stay there), separate from your normal browser. Off by default:
+
+```yaml
+integrations:
+  browser:
+    enabled: true
+    # chrome_path: auto-detected: $CHROME_PATH, Google Chrome or Chromium in
+    #   the usual places (/Applications/Google Chrome.app, /usr/bin/chromium, ...)
+    # headless: true
+    # step_budget: 60          # browser steps per task
+    # task_timeout: 10m
+    # idle_timeout: 10m        # stop an unused browser after this long
+    # screenshot_every_step: true
+    # sensitive_sites: [mybank.example]   # added to the built-in list
+    # allow_private: false     # let it reach your LAN (off: public sites only)
+    # no_sandbox: false        # needed in most containers (see docs/DEPLOY.md)
+```
+
+**What it can do.** Open pages and read them (as text, with numbered element
+refs), find elements, click links and buttons, type into fields, choose from
+drop-downs, scroll, go back, take screenshots, fill a saved login, and press
+the button that completes something (book, buy, send, save) once you approve.
+The **Browser** page of the web UI shows its current view live, with a Stop
+button; `bosun browser stop` does the same.
+
+| Tool | Capability | Risk | Scoped to the site |
+|---|---|---|---|
+| `browser.open`, `browser.read`, `browser.find`, `browser.screenshot` | `browser.read` | read (allowed by default) | `open`: its URL's site |
+| `browser.click`, `browser.type`, `browser.select`, `browser.scroll`, `browser.back` | `browser.act` | write (asks by default) | yes |
+| `browser.login` | `browser.login` | write | yes |
+| `browser.submit` | `browser.submit` | destructive (asks) | yes |
+
+**Granting a site.** Acting on pages asks by default. The first time the
+assistant clicks around a site you trust, answer **Approve and always allow on
+opentable.com** and later clicks, typing and scrolling there run without
+asking; other sites still ask. You can also set it up front:
+`bosun policy set browser.act allow --scope opentable.com`.
+
+**What always asks.** Anything that changes your account goes through
+`browser.submit`: `browser.click` refuses submit buttons and anything labelled
+buy, pay, order, checkout, confirm, book, reserve, send, post, publish, delete,
+remove, cancel, unsubscribe, save, update, change, apply, submit, sign up,
+register or transfer, and pressing Enter will not submit a form that posts.
+The approval shows a screenshot with the button highlighted, its label, and
+the values of the form it submits (passwords masked); if the page changes
+before you answer, nothing is pressed. You *can* allow `browser.submit` on a
+site, but don't: page content is untrusted, and a page (or an email the
+assistant read earlier) can try to talk the assistant into submitting
+something you did not ask for. That approval is what stops it. On **sensitive
+sites** (banks, brokerages, PayPal, Google and Apple accounts, password
+managers, the IRS, plus your `sensitive_sites`) every browser action asks,
+whatever your rules say.
+
+**Logins.** Save a site's login in the vault and the assistant can fill it in
+without ever seeing it:
+
+```sh
+bosun credentials set browser login:opentable.com --field username=you@example.com
+# prompts for the password
+```
+
+`browser.login` only fills it on an https page of that site (or a
+subdomain), and never submits: signing in is a `browser.submit` you approve.
+
+**What it never does.** Download files, upload files, fill payment details,
+visit non-web URLs (`file:`, `chrome:`), or reach your private network (unless
+`allow_private`). To pay, or to finish any step you would rather do yourself,
+deny the request and complete it on the site in your own browser. Each step's
+screenshot is kept under `<data_dir>/integrations/browser/steps/` (last 200
+per conversation) and referenced from the audit log.
 
 ### MCP servers
 

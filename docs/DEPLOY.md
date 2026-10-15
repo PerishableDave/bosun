@@ -344,6 +344,32 @@ docker compose start bosun
 Restore a `bosun backup` archive with `bosun restore` into a fresh volume, or a volume copy by extracting into an empty `bosun_bosun-data` volume (as uid 1000)
 before `docker compose up`.
 
+### Browser image
+
+The browser integration needs Chromium, which the main image leaves out to
+stay small. Build the `-browser` variant (the same image plus Alpine's
+`chromium` and fonts, with `CHROME_PATH` set):
+
+```sh
+docker build -f deploy/docker/Dockerfile.browser -t bosun:browser .
+```
+
+and use it as the `bosun` service's `image:` in `compose.yml`. Then enable
+the integration in `/data/bosun.yaml`:
+
+```yaml
+integrations:
+  browser:
+    enabled: true
+    no_sandbox: true   # Chromium's sandbox needs user namespaces, which Docker's
+                       # default seccomp profile blocks; the container is the sandbox
+```
+
+Chromium adds a few hundred MB to the image and uses roughly 150 to 300 MB of
+memory per active user; it stops after 10 minutes idle. On a personal machine
+no image is needed: the integration finds Google Chrome or Chromium where they
+are usually installed (or set `chrome_path`).
+
 ### Resource needs
 
 | Setup | RAM | CPU | Disk |

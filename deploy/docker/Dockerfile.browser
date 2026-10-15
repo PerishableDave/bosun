@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+#
+# Bosun "-browser" image variant: the regular image plus Chromium, for the
+# browser integration (integrations.browser). Built from source:
+#
+#   docker build -f deploy/docker/Dockerfile.browser -t bosun:dev-browser \
+#     --build-arg VERSION=$(git describe --tags --always) .
+#
+# It is a separate image so the main one stays small (Chromium and its fonts
+# add a few hundred MB). Keep the runtime stage in sync with ../../Dockerfile.
+# See docs/DEPLOY.md ("Browser image").
+
+ARG GO_VERSION=1.26
+ARG ALPINE_VERSION=3.22
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/bosund ./cmd/bosund && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/bosun ./cmd/bosun
+
+FROM alpine:${ALPINE_VERSION}
+# As the main image, plus chromium and fonts so pages render legibly in
+# screenshots and approval previews.
+RUN apk add --no-cache ca-certificates tzdata openssl \
+        chromium font-noto font-noto-emoji && \
+    addgroup -g 1000 bosun && \
+    adduser -D -H -u 1000 -G bosun -h /data -s /sbin/nologin bosun && \
+    mkdir -p /data && chown bosun:bosun /data && chmod 700 /data
+COPY --from=build /out/bosund /out/bosun /usr/local/bin/
+COPY deploy/docker/bosun.yaml /etc/bosun/bosun.yaml.template
+COPY --chmod=0755 deploy/docker/entrypoint.sh /usr/local/bin/bosun-entrypoint
+COPY --chmod=0755 deploy/docker/healthcheck.sh /usr/local/bin/bosun-healthcheck
+
+# The browser integration finds Chromium through $CHROME_PATH (or
+# integrations.browser.chrome_path). Chromium's own sandbox needs user
+# namespaces, which Docker's default seccomp profile does not allow: set
+# integrations.browser.no_sandbox: true in /data/bosun.yaml (the container is
+# then the sandbox), or run with a seccomp profile that permits them.
+ENV BOSUN_CONFIG=/data/bosun.yaml \
+    HOME=/data \
+    CHROME_PATH=/usr/bin/chromium-browser
+USER bosun:bosun
+WORKDIR /data
+VOLUME /data
+EXPOSE 7777
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["bosun-healthcheck"]
+ENTRYPOINT ["bosun-entrypoint"]
+CMD ["bosund", "--config", "/data/bosun.yaml"]

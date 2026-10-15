@@ -226,9 +226,24 @@ Response `200`:
 }
 ```
 
-`risk` is `read` | `write` | `destructive`. `status` is `pending` |
-`approved` | `denied` | `expired` | `canceled`. `conversation_id` and
-`tool_call_id` are omitted when empty.
+`risk` is `read` | `write` | `destructive` (the call's effective risk: an
+integration may escalate it for one call, e.g. a browser action on a bank's
+site is `destructive`). `status` is `pending` | `approved` | `denied` |
+`expired` | `canceled`. `conversation_id` and `tool_call_id` are omitted when
+empty.
+
+Two more fields appear when they apply:
+
+- `scope`: the site the call acts on (normalized: lowercase host without
+  `www.`, e.g. `"opentable.com"`), for tools that declare a scope argument
+  (the browser's). Clients then offer "Approve and always allow on
+  `<scope>`" (`"always": true` below). The bundled clients offer it only for
+  non-destructive approvals.
+- `has_preview`: `true` while `GET /v1/approvals/{id}/preview` serves an image
+  of what the call will do. For approvals, `args` may also carry a
+  `details` object added by the integration for the approver (for
+  `browser.submit`: the element and the form's fields, passwords masked); the
+  tool receives the original arguments.
 
 ### `POST /v1/approvals/{id}`
 
@@ -240,6 +255,12 @@ Request:
 
 `decision` is `"approve"` or `"deny"` (anything else → `400`).
 
+`{"decision": "approve", "always": true}` approves **and** creates the
+caller's `allow` rule for the approval's capability on its `scope` (as
+`PUT /v1/policy/{capability}?scope=<scope>` would; audited). The rule is only
+created if the approval is still pending and yours. `400` if the approval has
+no scope or `always` is combined with `deny`.
+
 Response `200`: the updated approval object (as above, with `status`,
 `resolved_at`, and `resolved_by` set). An `approval_resolved` event is
 published to all of the user's clients, and the waiting tool call proceeds
@@ -249,19 +270,36 @@ Errors: `403 forbidden` (the approval belongs to another user), `404` (no
 such approval), `409 conflict` (already resolved by another client, expired,
 or canceled).
 
+### `GET /v1/approvals/{id}/preview`
+
+The preview image of one of the caller's **pending** approvals (`has_preview:
+true`), e.g. a screenshot of the page with the button the call will press
+highlighted. Response `200` with `Content-Type: image/png` (or `image/jpeg`)
+and `Cache-Control: no-store`. `404` if the approval is not yours, has no
+preview, or is no longer pending: previews live on disk under
+`$data_dir/approvals/` only while the approval is pending and are deleted
+when it is approved, denied, expired or canceled (a periodic sweep removes
+leftovers).
+
 ### `GET /v1/policy`
 
 The caller's effective permission configuration: the per-risk defaults (from
 `policy.defaults` in `bosun.yaml`) and the caller's explicit rules, ordered by
-capability. An explicit rule beats the risk default; capabilities no
-registered tool declares are always denied.
+capability, then scope. Precedence: a rule for (capability, site) (or for a
+parent domain of the site) beats the capability-wide rule, which beats the
+risk default; capabilities no registered tool declares are always denied.
+Scoped rules only apply to tools that declare a scope argument (the
+browser's); `scope` is omitted for capability-wide rules.
 
 Response `200`:
 
 ```json
 {
   "defaults": { "read": "allow", "write": "ask", "destructive": "ask" },
-  "rules": [ { "capability": "websearch.fetch", "decision": "ask", "updated_at": "2026-10-12T22:00:00Z" } ]
+  "rules": [
+    { "capability": "browser.act", "scope": "opentable.com", "decision": "allow", "updated_at": "2026-10-12T22:00:00Z" },
+    { "capability": "websearch.fetch", "decision": "ask", "updated_at": "2026-10-12T22:00:00Z" }
+  ]
 }
 ```
 
@@ -278,15 +316,22 @@ Request:
 
 `decision` is `"allow"`, `"ask"`, or `"deny"`.
 
-Response `200`: the rule (`{"capability": …, "decision": …, "updated_at": …}`).
+Response `200`: the rule (`{"capability": …, "scope": …, "decision": …, "updated_at": …}`).
 
-Errors: `400` (bad decision, malformed capability, or a capability that no
-registered tool declares; see `GET /v1/tools`).
+`?scope=<site>` limits the rule to calls on that site and its subdomains
+(`PUT /v1/policy/browser.act?scope=opentable.com`). The value is normalized
+(`https://www.OpenTable.com/x` → `opentable.com`); one that is not a host is
+a `400`.
+
+Errors: `400` (bad decision, malformed capability, bad scope, or a capability
+that no registered tool declares; see `GET /v1/tools`).
 
 ### `DELETE /v1/policy/{capability}`
 
 Removes the caller's rule so the risk default applies again. Recorded in the
-audit log. Response `204 No Content`.
+audit log. Response `204 No Content`. With `?scope=<site>` it removes only
+that site's rule; without it, only the capability-wide rule (scoped rules are
+kept).
 
 Errors: `404` (you have no rule for that capability).
 
@@ -978,6 +1023,36 @@ the request stays valid. Errors: `400` (new password too short),
 
 ---
 
+### Browser
+
+The browser integration's per-user Chromium (see README, "Browser"). These
+answer `501` when `integrations.browser` is not enabled.
+
+#### `GET /v1/browser`
+
+```json
+{
+  "enabled": true, "running": true, "active": true,
+  "url": "https://www.opentable.com/r/bistro", "title": "Bistro | OpenTable",
+  "steps": 12, "step_budget": 60, "last_step_at": "2026-10-12T22:00:00Z",
+  "has_screenshot": true
+}
+```
+
+`active` is true for two minutes after the last browser step (clients poll
+the screenshot every 2 s while it is). `steps` counts the caller's latest
+task.
+
+#### `GET /v1/browser/screenshot`
+
+The caller's current page as `image/png` (a fresh capture when the browser
+is idle, else the latest step's). `404` when there is none.
+
+#### `POST /v1/browser/stop`
+
+Kills the caller's Chromium (and its helper processes), ending any task.
+The profile (sign-in cookies) is kept. `204 No Content`.
+
 ## SSE events
 
 Each event is framed as:
@@ -997,7 +1072,7 @@ brevity.
 | `text` | `{"delta": "Here is"}` | A chunk of assistant text; concatenate deltas |
 | `tool_call` | `{"id": "toolu_01", "name": "calendar.list", "args": {…}}` | The model called a tool |
 | `tool_result` | `{"id": "toolu_01", "summary": "3 events today"}` | A tool call finished (summary only; full results stay server-side) |
-| `approval_required` | `{"approval_id": "appr_…", "tool": "email.send", "args": {…}, "risk": "write"}` | A tool call is blocked waiting for the user; answer with `POST /v1/approvals/{id}` |
+| `approval_required` | `{"approval_id": "appr_…", "tool": "email.send", "args": {…}, "risk": "write"}` | A tool call is blocked waiting for the user; answer with `POST /v1/approvals/{id}`. Also carries `scope` and `has_preview` when they apply (see `GET /v1/approvals`) |
 | `approval_resolved` | `{"approval_id": "appr_…", "decision": "approve"}` | An approval was answered; `decision` is `approve`, `deny`, `expired`, or `canceled` |
 | `done` | `{}` | The turn finished successfully |
 | `error` | `{"message": "model request failed: …"}` | The turn failed; terminal |

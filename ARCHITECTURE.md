@@ -174,12 +174,25 @@ type Tool struct {
     Risk        Risk            // Read | Write | Destructive
     InputSchema json.RawMessage
     Handler     func(ctx context.Context, in json.RawMessage) (Result, error)
+
+    // optional
+    ScopeArg string // argument whose (normalized) value scopes policy, e.g. "site"
+    RiskFunc func(ctx context.Context, args json.RawMessage) Risk // may escalate, never lower
 }
 
 type Result struct {
-    Content   string   // text handed to the model
-    Untrusted bool     // true for anything originating outside Bosun
-    Data      any      // structured result for the UI / hooks
+    Content     string          // text handed to the model
+    Untrusted   bool            // true for anything originating outside Bosun
+    Data        any             // structured result for the UI / hooks
+    AuditDetail json.RawMessage // stored as the audit entry's Detail
+}
+
+// optional, implemented by an Integration; called only when policy asks
+type Previewer interface {
+    Preview(ctx context.Context, tool string, args json.RawMessage) ([]byte, string, error)
+}
+type ApprovalDetailer interface {
+    ApprovalDetails(ctx context.Context, tool string, args json.RawMessage) (json.RawMessage, error)
 }
 ```
 
@@ -193,9 +206,10 @@ Rules that keep in-process plugins honest:
   `make lint` and CI) forbids `internal/integrations/**` from importing
   `os/exec`, `internal/store`, `internal/auth`, `internal/vault`,
   `internal/dispatch`, or other integrations. This is the compile-time
-  substitute for process isolation. The single exception is `os/exec` in
-  `internal/integrations/mcp` (that directory only), because stdio MCP servers
-  are subprocesses.
+  substitute for process isolation. The exceptions are `os/exec` in
+  `internal/integrations/mcp` (stdio MCP servers are subprocesses) and in
+  `internal/integrations/browser` (it launches Chromium), each for that one
+  directory only.
 - Integrations receive credentials through `CredentialSource`, scoped to the
   current user, and never read the vault directly.
 
@@ -272,6 +286,7 @@ API keys do not leak into third-party servers.
 | `notes` | per user (or shared) | `list`, `search`, `read` (read); `write`, `append` (write); `delete` (destructive) |
 | `email` | per user | `list`, `search`, `read`, `folders` (read); `draft`, `archive`, `mark` (write); `send` (destructive) |
 | `calendar` | per user | `calendars`, `events`, `get`, `freebusy` (read); `create`, `update` (write); `delete` (destructive). CalDAV, or read-only ICS feeds |
+| `browser` | per user | `open`, `read`, `find`, `screenshot` (read); `click`, `type`, `select`, `scroll`, `back` (write, site-scoped); `login` (write, site-scoped); `submit` (destructive, site-scoped, previewed). See "Browser" below |
 
 `email` and `calendar` implement the optional `integration.CredentialTester`
 (`POST /v1/integrations/{name}/test`): `bosun connect email` uses it to check
@@ -302,6 +317,71 @@ user's INBOX for UIDs above a high-water mark persisted in
 (`{uid, folder, from, subject, snippet, date}`) for that user, at most 20 per
 poll. A user's first poll (or a UIDVALIDITY change) only records the mark.
 
+### Browser
+
+`internal/integrations/browser` gives each user a private, headless Chromium
+that the agent drives through the DevTools protocol
+([chromedp](https://github.com/chromedp/chromedp)). Containment, from the
+outside in:
+
+- **Process.** One Chromium per user, started lazily and stopped after 10
+  minutes idle (or by `bosun browser stop` / `POST /v1/browser/stop`). It is
+  launched with a minimal environment (`HOME` = its profile, `PATH`, `LANG`),
+  its own profile directory (`$data_dir/integrations/browser/profiles/u<id>`;
+  never the host's browser profiles), `--disable-extensions --disable-sync
+  --disable-background-networking --no-first-run`, downloads denied, and in
+  its own process group so stopping it kills its helpers. DevTools runs over
+  a pipe (`--remote-debugging-pipe`), not a TCP port, so no other local
+  process can attach to it.
+- **Network.** Every request goes through an in-process proxy
+  (`--proxy-server`, loopback not bypassed) whose dialer refuses private,
+  loopback, link-local and CGNAT addresses (the websearch fetch rules, checked
+  on the address actually dialed, so redirects, subresources, form posts and
+  DNS rebinding are covered). `allow_private: true` lifts this for a LAN app.
+  Only `http`/`https` pages are kept: anything else (a `file:` or `chrome:`
+  URL, a Chrome error page) is replaced by `about:blank`.
+- **Reading.** `browser.read` renders the page as compact text from the DOM:
+  headings, collapsed text, and interactive elements as `[ref_N] role
+  "name"` with values (password values are never shown). It runs in an
+  isolated JavaScript world, so page scripts cannot tamper with the reader.
+  Everything is `Untrusted`.
+- **Acting is scoped to a site.** Page actions (`browser.act`) and
+  `browser.login` take a `site` argument (the tool's `ScopeArg`), which must
+  equal the current page's site, so policy decides per site. A user can allow
+  `browser.act` on one site ("approve and always allow on opentable.com")
+  without allowing it anywhere else.
+- **The submit gate.** `browser.click` refuses elements that look
+  state-changing: submit buttons and inputs, default-type buttons inside a
+  form, and anything labelled buy, pay, order, checkout, confirm, book,
+  reserve, send, post, publish, delete, remove, cancel, unsubscribe, save,
+  update, change, apply, submit, sign up, register or transfer. It checks
+  both the element and whatever is actually under the click point. Pressing
+  Enter in a field is refused when it would submit a non-GET form or one with
+  a password. Those actions go through `browser.submit`, which is
+  destructive (asked by default) and implements `Previewer`: the approval
+  carries a screenshot with the element highlighted plus the element's text
+  and the form's fields (passwords masked). If the element changed between
+  preview and approval, nothing is pressed.
+- **Logins.** `browser.login` fills the username and password from the vault
+  credential `login:<site>` (or a parent domain), only on an https page of
+  that site, never returns them to the model, and never submits.
+- **Sensitive sites.** Tools carry a `RiskFunc`: on a site matching
+  `sensitive_sites` (banks, brokerages, payment and identity providers, plus
+  the admin's list) every call becomes destructive, and the dispatcher never
+  silently allows an escalated call, whatever the rules say.
+- **Budget.** A task (browser steps in one conversation with no gap over
+  10 minutes) is capped at `step_budget` steps (60) and `task_timeout`
+  (10m). Each step's screenshot is kept under
+  `$data_dir/integrations/browser/steps/u<id>/<conversation>/` (200 per
+  conversation) and referenced from the audit entry's Detail.
+- **Not done.** No downloads, no file uploads, no payment autofill, no
+  iframes (their content is not read or acted on). The user takes over for
+  payment and other sensitive steps by denying and doing it on the site.
+
+The integration is the second allowed user of `os/exec` (for the
+`*exec.Cmd` hook that sets the process group; chromedp's allocator starts the
+process).
+
 ## Request lifecycle
 
 An interactive message and a routine run take the same path from step 3 on.
@@ -312,10 +392,13 @@ An interactive message and a routine run take the same path from step 3 on.
 3. **Model call.** The provider returns text and/or tool calls.
 4. **For each tool call:**
    1. `hooks.PreToolCall` runs (may rewrite args, cancel, or annotate).
-   2. `policy.Decide(user, capability, risk, args)` returns `allow`, `ask`, or
-      `deny`.
-   3. On `ask`, an `Approval` is created and pushed to the user's clients over
-      SSE. The tool call blocks until approved, denied, or timed out.
+   2. The tool's `RiskFunc`, if any, may escalate the risk for this call; the
+      scope is extracted from the tool's `ScopeArg`.
+      `policy.Decide(user, capability[, scope], risk, args)` returns `allow`,
+      `ask`, or `deny` (an escalated call is never `allow`).
+   3. On `ask`, the integration's preview (if it implements `Previewer`) is
+      taken, then an `Approval` is created and pushed to the user's clients
+      over SSE. The tool call blocks until approved, denied, or timed out.
    4. The dispatcher invokes the `Handler`.
    5. `hooks.PostToolCall` runs.
    6. The call, decision, approver, and result summary are appended to the
@@ -326,7 +409,10 @@ An interactive message and a routine run take the same path from step 3 on.
 
 ## Policy and approvals
 
-Policy is evaluated per **user × capability**.
+Policy is evaluated per **user × capability**, optionally narrowed by a
+**scope**: tools that declare a `ScopeArg` (the browser's `site`) pass that
+argument's normalized value (lowercase host, no `www.`), and a rule can be
+stored for (capability, scope).
 
 ```yaml
 # defaults by risk level, applied when no explicit rule matches
@@ -347,7 +433,24 @@ users:
       email.delete: deny
 ```
 
-- Explicit rule > risk default > `deny`. Unknown capabilities are denied.
+- Scoped rule (for the scope or a parent domain of it) > capability-wide
+  rule > risk default > `deny`. Unknown capabilities are denied.
+  `bosun policy set browser.act allow --scope opentable.com`.
+- A tool's `RiskFunc` may raise one call's risk (never lower it); the
+  dispatcher then asks even if a rule says `allow` (an explicit `deny`
+  still denies). The browser uses this for sensitive sites.
+- **Previews.** An integration implementing `Previewer` is asked for an
+  image before an approval is created (only on `ask`); `ApprovalDetailer`
+  adds a `details` object to the arguments shown to the approver (not to
+  those the tool receives). A preview error aborts the call before anyone
+  is asked. Images (≤ 2 MB, PNG/JPEG) are kept on disk in
+  `$data_dir/approvals/<id>.png`, not in SQLite, served to the owner only
+  (`GET /v1/approvals/{id}/preview`), and deleted when the approval resolves,
+  expires or is canceled; an hourly sweep removes leftovers.
+- **Always allow on a site.** For a scoped approval, clients offer "Approve
+  and always allow on <scope>", which creates the scoped `allow` rule
+  (audited) and approves. The bundled clients do not offer it for
+  destructive approvals.
 - Rules may carry a **condition** on arguments later (e.g. `email.send` allowed
   only to `@family.example`). v1 ships the enum; the schema leaves room for
   conditions.
@@ -665,6 +768,14 @@ What Bosun trusts and doesn't.
   backstop.
 - **Capability enforcement:** the dispatcher is the single choke point; tests
   assert that no `Handler` is reachable without a `policy.Decide` call.
+- **Browser containment:** a per-user Chromium with its own profile, a
+  pipe for DevTools, a minimal environment and an SSRF-guarded proxy; site-
+  scoped actions, a submit gate in front of state-changing clicks, previews
+  for approvals, sensitive sites that always ask, and no downloads, uploads
+  or payment autofill (see "Browser" above). Page content is untrusted and a
+  hostile page can try to steer the model, so the approval gate on
+  `browser.submit` is the backstop; granting a scoped `allow` for
+  `browser.submit` removes it for that site.
 - **Network exposure:** `bosund` listens on loopback by default. A
   non-loopback listen requires either TLS (`daemon.tls`) or
   `daemon.behind_proxy: true`, which declares that a TLS-terminating reverse

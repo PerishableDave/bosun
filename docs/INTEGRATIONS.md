@@ -42,6 +42,7 @@ untrusted.
 | `email` | IMAP4rev1 + SMTP, XOAUTH2 for Gmail | list, search, read, draft, send (destructive), archive, mark, folders | Poller emits `email.received` events for routines |
 | `calendar` | CalDAV + iCalendar, Google CalDAV with OAuth; read-only ICS feeds | calendars, events, get, create, update, delete, freebusy | RRULE expansion for the common cases. ICS backend: credential kinds `ics` / `ics:<name>` hold a private feed URL (Google "Secret address in iCal format", Outlook.com published calendar, iCloud public calendar); fetched over https with an SSRF guard, 5 MB cap and 5-minute per-user cache, merged as read-only calendars |
 | `channels/telegram` | Bot API, long polling | chat, inline Approve/Deny, routine deliveries | First channel; the `channels` framework is designed for Slack/Discord/iMessage next |
+| `browser` | Chromium over the DevTools protocol (chromedp, pipe transport) | open, read, find, screenshot (read); click, type, select, scroll, back (write, per site); login (vault `login:<site>`); submit (destructive, previewed) | Contained rather than general-purpose: per-user profile, SSRF-guarded proxy, site-scoped grants, a submit gate in front of state-changing clicks, screenshot previews in approvals, sensitive sites always ask. No downloads, uploads or payment autofill. See README "Browser" and ARCHITECTURE "Browser" |
 
 ## Wave 2 (planned)
 
@@ -62,8 +63,11 @@ untrusted.
 
 ## Deliberately not planned
 
-- Browser automation as a general fallback (OpenClaw-style). It is the main
-  way these agents end up with more access than the user intended.
+- Unrestricted browser automation (OpenClaw-style, in the user's own browser
+  and sessions). It is the main way these agents end up with more access than
+  the user intended. The `browser` integration is the contained alternative:
+  its own profile, site-scoped grants, and an approval with a screenshot for
+  anything that changes an account.
 - Payments. Bosun can draft, book, and prepare; a human pays.
 - A dedicated agent email address that can create accounts on the user's
   behalf. Useful, but it is an account-creation capability and belongs behind

@@ -34,6 +34,9 @@ is compiled in).
 | github.com/mattn/go-isatty | v0.0.24 | MIT | via modernc.org/libc |
 | github.com/ncruces/go-strftime | v1.0.0 | MIT | via modernc.org/libc |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | via modernc.org/mathutil |
+| github.com/chromedp/chromedp | v0.21.0 | MIT | browser integration (DevTools protocol client) |
+| github.com/chromedp/cdproto | v0.157.8 | MIT | via chromedp (protocol types) |
+| github.com/go-json-experiment/json | v0.0.0-20260213210345-44df1a37e875 | BSD-3-Clause | via cdproto (JSON v2) |
 | github.com/inconshreveable/mousetrap | v1.1.0 | Apache-2.0 | via cobra, Windows builds only (Bosun does not ship Windows builds) |
 
 The Go standard library and runtime (BSD-3-Clause) are linked into both
@@ -79,6 +82,7 @@ rather than the local module cache.
 |---|---|---|---|
 | `golang:1.26-alpine` | `Dockerfile` build stage | BSD-3-Clause (Go) | build only; not in the shipped image |
 | `alpine:3.22` | base of `ghcr.io/perishabledave/bosun` | Alpine is a collection of packages under their own licenses: musl (MIT), BusyBox and apk-tools (GPL-2.0), OpenSSL (Apache-2.0), ca-certificates (MPL-2.0), tzdata (public domain) | separate programs aggregated in the image; Bosun does not link them. Sources: [Alpine aports](https://gitlab.alpinelinux.org/alpine/aports) |
+| `alpine:3.22` + `chromium`, `font-noto` | base of the `-browser` variant (`deploy/docker/Dockerfile.browser`) | Chromium (BSD-3-Clause, with many third-party components under their own permissive and weak-copyleft licenses), Noto fonts (OFL-1.1) | separate program that bosund starts and drives over a pipe; Bosun does not link it |
 | `ollama/ollama` | `deploy/docker/compose.yml`, optional profile | MIT | separate service, pulled from upstream, reached over HTTP |
 | `searxng/searxng` | `deploy/docker/compose.yml`, optional profile | AGPL-3.0 | separate service, pulled from upstream, reached over HTTP; Bosun ships only its own `searxng/settings.yml` |
 | `caddy:2` | `deploy/docker/compose.yml`, optional profile | Apache-2.0 | separate reverse proxy, pulled from upstream |

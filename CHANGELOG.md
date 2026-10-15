@@ -12,6 +12,26 @@ First public release, planned as `0.1.0`.
 
 ### Added
 
+- **Browser integration** (`integrations.browser`). A private headless
+  Chromium per user, driven over the DevTools protocol (chromedp, through a
+  pipe), with its own profile, a minimal environment and an SSRF-guarded
+  proxy. Tools to open, read (text with element refs), find, click, type,
+  select, scroll, go back, submit, fill a saved login and take screenshots.
+  A submit gate refuses state-changing clicks; `browser.submit` is always
+  asked by default and its approval shows a screenshot with the element
+  highlighted and the form's values. Sensitive sites (banks, brokerages,
+  identity providers) ask for every action. Web UI Browser page,
+  `bosun browser status|stop|screenshot`, `/v1/browser` endpoints, and a
+  `-browser` Docker image variant.
+- **Site-scoped policy rules.** A rule can be limited to one site
+  (`bosun policy set browser.act allow --scope opentable.com`,
+  `PUT /v1/policy/{capability}?scope=`); scoped rule > capability rule >
+  risk default. Approvals of scoped calls offer "Approve and always allow on
+  <site>" in the web UI, the CLI and Telegram.
+- **Approval previews.** An integration can attach a screenshot to an
+  approval (`GET /v1/approvals/{id}/preview`, shown in the web UI and sent
+  as a photo on Telegram); previews are deleted when the approval resolves.
+
 - **Daemon and CLI.** `bosund` (HTTP + SSE API, agent loop, scheduler) and
   `bosun` (CLI), two static binaries for macOS and Linux on amd64/arm64.
   SQLite storage (pure Go, no cgo) with embedded migrations.
