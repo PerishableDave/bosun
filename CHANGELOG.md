@@ -10,6 +10,18 @@ minor versions may contain breaking changes; they are called out under
 
 Nothing yet.
 
+## [0.3.1] - 2026-10-15
+
+### Fixed
+
+- Web UI on phones: the page no longer loads zoomed in (iOS Safari zoomed
+  into the autofocused login field, which was under 16px; form fields are
+  now 16px on phones and touch devices).
+- Web UI on phones: the navigation drawer scrolls as one piece with a
+  pinned header and account footer, scrolling no longer passes through to
+  the page behind it, and the page behind an open drawer can't be scrolled,
+  tapped or focused. Leaving phone width closes the drawer.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added
@@ -157,7 +169,8 @@ First public release.
 - Project documents: README, GOALS, ARCHITECTURE, API, DEPLOY, INTEGRATIONS
   roadmap, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, THIRD_PARTY_LICENSES.
 
-[Unreleased]: https://github.com/perishabledave/bosun/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/perishabledave/bosun/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/perishabledave/bosun/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/perishabledave/bosun/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/perishabledave/bosun/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/perishabledave/bosun/releases/tag/v0.1.0
