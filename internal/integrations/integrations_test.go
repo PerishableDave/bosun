@@ -29,6 +29,13 @@ var forbiddenExact = []string{"os/exec"}
 // (e.g. mcp/mcptest) and not any other integration. The bridge gives
 // children a minimal environment rather than the daemon's.
 //
+// os/exec: the code sandbox (internal/integrations/sandbox) must run the
+// docker CLI to start throwaway, network-less containers; that is the
+// point of the integration, and the model's code runs in the container,
+// never on the host. The exemption covers that one package directory only,
+// and the sandbox gives the docker CLI a minimal environment rather than
+// the daemon's.
+//
 // os/exec: the browser integration (internal/integrations/browser) must
 // launch Chromium, which is a separate process by definition; chromedp's
 // allocator starts it and the integration only uses *exec.Cmd to put the
@@ -37,7 +44,7 @@ var forbiddenExact = []string{"os/exec"}
 // not its subpackages. The browser gets a minimal environment, its own
 // profile directory, a pipe (not a TCP port) for DevTools, and an
 // SSRF-guarded proxy; it executes nothing else.
-var exactAllow = map[string][]string{"os/exec": {"mcp", "browser"}}
+var exactAllow = map[string][]string{"os/exec": {"mcp", "sandbox", "browser"}}
 
 // forbiddenPrefix are module packages (and their subpackages) no integration
 // may use.
@@ -185,6 +192,11 @@ import "os/exec"`)
 import "os/exec"`)
 	write("mcpx/x.go", `package mcpx
 import "os/exec"`)
+	// So may the sandbox (it drives the docker CLI), but not its subpackages.
+	write("sandbox/docker.go", `package sandbox
+import "os/exec"`)
+	write("sandbox/sub/sub.go", `package sub
+import "os/exec"`)
 	// So may the browser integration (it launches Chromium); not its
 	// subpackages.
 	write("browser/launch.go", `package browser
@@ -217,13 +229,19 @@ import "os/exec"`)
 	if strings.Contains(joined, "stdio.go") {
 		t.Errorf("mcp/stdio.go must be allowed to import os/exec:\n%s", joined)
 	}
+	if strings.Contains(joined, "docker.go") {
+		t.Errorf("sandbox/docker.go must be allowed to import os/exec:\n%s", joined)
+	}
+	if !strings.Contains(joined, filepath.Join("sandbox", "sub", "sub.go")) {
+		t.Errorf("sandbox/sub must not be allowed to import os/exec:\n%s", joined)
+	}
 	if strings.Contains(joined, "launch.go") {
 		t.Errorf("browser/launch.go must be allowed to import os/exec:\n%s", joined)
 	}
 	if !strings.Contains(joined, "browser/sub/sub.go") && !strings.Contains(joined, filepath.Join("browser", "sub", "sub.go")) {
 		t.Errorf("browser/sub must not be allowed to import os/exec:\n%s", joined)
 	}
-	if len(violations) != 12 {
-		t.Errorf("got %d violations, want 12:\n%s", len(violations), joined)
+	if len(violations) != 13 {
+		t.Errorf("got %d violations, want 13:\n%s", len(violations), joined)
 	}
 }

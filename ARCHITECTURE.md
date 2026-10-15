@@ -39,6 +39,7 @@ flowchart LR
         Cal[calendar]
         Mail[email]
         Notes[notes]
+        Files[files]
         Search[web search]
         MCP[mcp bridge]
     end
@@ -89,7 +90,9 @@ internal/
   integrations/      first-party integrations (one package each)
     calendar/
     email/
+    files/
     notes/
+    sandbox/         code execution in throwaway Docker containers
     websearch/
     mcp/             bridge: external MCP servers -> Integration
   policy/            capability rules, risk defaults, decision engine
@@ -207,9 +210,10 @@ Rules that keep in-process plugins honest:
   `os/exec`, `internal/store`, `internal/auth`, `internal/vault`,
   `internal/dispatch`, or other integrations. This is the compile-time
   substitute for process isolation. The exceptions are `os/exec` in
-  `internal/integrations/mcp` (stdio MCP servers are subprocesses) and in
-  `internal/integrations/browser` (it launches Chromium), each for that one
-  directory only.
+  `internal/integrations/mcp` (because stdio MCP servers are subprocesses),
+  in `internal/integrations/sandbox` (because it drives the `docker` CLI) and
+  in `internal/integrations/browser` (because it launches Chromium), each for
+  that directory only.
 - Integrations receive credentials through `CredentialSource`, scoped to the
   current user, and never read the vault directly.
 
@@ -284,9 +288,28 @@ API keys do not leak into third-party servers.
 |---|---|---|
 | `websearch` | shared | `search`, `fetch` (read) |
 | `notes` | per user (or shared) | `list`, `search`, `read` (read); `write`, `append` (write); `delete` (destructive) |
+| `files` | shared | `roots`, `list`, `search`, `read`, `stat` (read); `write`, `append`, `move`, `mkdir` (write); `delete` (destructive). Only admin-listed roots, all results untrusted |
 | `email` | per user | `list`, `search`, `read`, `folders` (read); `draft`, `archive`, `mark` (write); `send` (destructive) |
 | `calendar` | per user | `calendars`, `events`, `get`, `freebusy` (read); `create`, `update` (write); `delete` (destructive). CalDAV, or read-only ICS feeds |
+| `sandbox` | shared | `run` (write). Python, Node or shell in a throwaway Docker container; off by default |
 | `browser` | per user | `open`, `read`, `find`, `screenshot` (read); `click`, `type`, `select`, `scroll`, `back` (write, site-scoped); `login` (write, site-scoped); `submit` (destructive, site-scoped, previewed). See "Browser" below |
+
+`sandbox` (`ScopeShared`, no user state) runs model-written code with
+`docker run --rm -i --network none --read-only --tmpfs /work --user
+65534:65534 --cap-drop ALL --security-opt no-new-privileges` plus memory,
+CPU, pids and wall-clock limits. No host path is ever mounted: a tar of the
+code, input files and stdin goes in on the container's stdin, and a small
+`sh` wrapper inside writes a tar of the exit status, stdout, stderr and
+`/work/out/` back on stdout, which the integration parses with caps. On
+timeout the container is force-removed. Containers carry the label
+`bosun.sandbox=1`, and `Init`/`Close` remove leftovers, so a crashed daemon
+leaves nothing running. A semaphore (`max_concurrent`) makes excess runs fail
+fast. Results are `Untrusted`. The risk is write (ask by default); the
+containment is what makes `allow` a reasonable choice. The `docker` CLI runs
+with a minimal environment (`PATH`, `HOME`, `USER`, `TMPDIR`,
+`XDG_RUNTIME_DIR`, `DOCKER_*`). Docker access itself is root-equivalent on
+the host, which is why the compose deployment does not mount the socket by
+default.
 
 `email` and `calendar` implement the optional `integration.CredentialTester`
 (`POST /v1/integrations/{name}/test`): `bosun connect email` uses it to check
@@ -378,7 +401,7 @@ outside in:
   iframes (their content is not read or acted on). The user takes over for
   payment and other sensitive steps by denying and doing it on the site.
 
-The integration is the second allowed user of `os/exec` (for the
+The integration is one of the three allowed users of `os/exec` (for the
 `*exec.Cmd` hook that sets the process group; chromedp's allocator starts the
 process).
 
@@ -795,6 +818,11 @@ What Bosun trusts and doesn't.
   model, token counts; not content unless `audit.log_content: true`).
 - **Supply chain:** first-party integrations are vendored Go; MCP servers are
   the user's choice and are clearly labelled as third-party in the UI.
+- **Code execution:** only through `sandbox.run`, in a Docker container with
+  no network, no host mounts, a read-only root, a non-root user and resource
+  limits. The container boundary (kernel namespaces and cgroups) is the
+  isolation; a kernel or Docker escape would defeat it. `bosund` itself needs
+  Docker access, which is root-equivalent on the host.
 
 ## Tradeoffs accepted
 

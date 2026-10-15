@@ -30,6 +30,9 @@ local models via Ollama.
   login before saving it.
 - **Notes, web search and fetch,** and any [MCP](https://modelcontextprotocol.io)
   server's tools, each under the same policy and approval gate.
+- **A code sandbox:** the assistant can run short Python, Node or shell
+  programs in a throwaway container with no network and no access to your
+  files.
 - **A contained web browser** (opt-in): a private headless Chromium per user
   that can read pages, fill forms and click through sites you allow, while
   anything that books, buys, sends or saves waits for your approval with a
@@ -473,6 +476,49 @@ integrations:
   files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
   point outside the folder are refused. Reads return at most 200 KB.
 
+### Files
+
+The `files` integration gives the assistant access to **only the folders you
+list**, as the OS user running `bosund`. It is off by default (`bosun setup`
+leaves it alone); enable it and restart:
+
+```yaml
+integrations:
+  files:
+    enabled: true
+    roots:
+      - path: ~/Documents/Shared   # ~ is expanded for the daemon user
+        name: shared               # how the model refers to it: shared/report.md
+        writable: true
+      - path: /srv/media
+        name: media
+        writable: false
+    max_read: 2MiB                 # per files.read call, and the largest file searched
+    extensions: []                 # empty = any; else e.g. [.md, .txt, .csv, .json, .pdf]
+    include_hidden: false          # true allows dotfiles such as .git and .env
+```
+
+- Tools: `files.roots`, `files.list`, `files.search`, `files.read`,
+  `files.stat` (read risk, allowed by default); `files.write`, `files.append`,
+  `files.move`, `files.mkdir` (write risk, ask by default); `files.delete`
+  (destructive, asks by default; files only, never folders). Capabilities are
+  `files.read`, `files.write` and `files.delete`.
+- Every path is `<root name>/<relative path>`. Absolute paths, `..`, hidden
+  entries, over-long names and symlinks that resolve outside the root are
+  refused; recursive list and search never follow symlinks. Errors never show
+  host paths. Writes need `writable: true`, are atomic (temp file then rename)
+  and refuse to replace an existing file unless the call says `overwrite: true`.
+  Moves stay inside one root. Files over 16 MiB are not written.
+- `files.read` returns UTF-8 text (invalid bytes replaced), capped at
+  `max_read` per call with an offset to continue. Binary files and images
+  return only type, size and (for images) dimensions. PDFs are not parsed by
+  Bosun; the read says so and points at the sandbox integration.
+- **Household caveat:** there is one filesystem for the whole household, not
+  per-user roots. Everyone who can talk to the assistant can use every root,
+  and file contents are treated as untrusted data because another household
+  member (or anything syncing into those folders) may have written them. Point
+  roots only at folders you are happy to share with all users.
+
 ### Browser
 
 The `browser` integration gives your assistant its own web browser: a private,
@@ -586,6 +632,90 @@ integrations:
   and restarts `bosund`.
 - MCP servers are third-party code running with your user's privileges; only
   configure servers you trust.
+
+### Sandbox (run code)
+
+The `sandbox` integration lets the assistant write and run short Python,
+Node.js or shell programs: crunch a CSV you pasted, convert a file, check a
+calculation, generate a chart. Each run happens in a fresh, throwaway Docker
+container that cannot reach the network or your files. It is not a shell on
+your machine: the code never runs on the host. `bosun setup` leaves it off; it
+needs Docker (Docker Desktop on macOS/Windows, Docker Engine on Linux)
+reachable by the user `bosund` runs as. Enable it and restart `bosund`:
+
+```yaml
+integrations:
+  sandbox:
+    enabled: true
+    backend: docker          # "none" disables it
+    images:                  # defaults shown; one pinned image per language
+      python: python:3.12-alpine
+      node: node:22-alpine
+      shell: alpine:3.22
+    timeout: 60s             # per run, at most 300s
+    memory: 512m             # swap disabled
+    work_size: 64m           # the /work tmpfs (counts toward memory)
+    max_concurrent: 2        # further runs fail fast with "busy"
+    pull: auto               # pull a missing image on first use; "never" to forbid
+```
+
+- One tool, `sandbox.run` {`language`: `python`|`node`|`shell`, `code`,
+  `files` (name → text, each ≤ 1 MiB, ≤ 8 MiB total, appear as `./in/<name>`),
+  `args`, `stdin`}. It returns the exit code, stdout and stderr (64 KiB each),
+  and any files the program wrote to `./out/` (up to 20 files, 8 MiB; text
+  files are shown, binary files are returned base64 in the structured result).
+  Output is treated as untrusted data, since the code may have processed a
+  fetched page or an email.
+- Capability `sandbox.run`, risk **write**, so every run asks for approval by
+  default and you see the code first. Because of the containment below,
+  allowing it unattended is reasonable once you are comfortable:
+  `bosun policy set sandbox.run allow`. Short of a container-escape bug in
+  the kernel or Docker, the worst a run can do is use one CPU and `memory`
+  of RAM for up to `timeout`, and return wrong output.
+- Containment, per run: `docker run --rm --network none --read-only` with a
+  tmpfs at `/work` as the only writable place, no host paths mounted (code and
+  inputs go in on stdin as a tar, results come back on stdout),
+  `--user 65534:65534` (nobody), `--cap-drop ALL`,
+  `--security-opt no-new-privileges`, `--memory 512m --memory-swap 512m`,
+  `--cpus 1`, `--pids-limit 256`, and a hard timeout after which the container
+  is force-removed. Containers are labelled `bosun.sandbox=1`; anything left
+  behind by a crash is removed when `bosund` starts or stops.
+- **First use pulls the image** (`pull: auto`): about 20 MB for Alpine
+  Python and 50 MB for Node; the first call may take a while, and if it
+  outlasts the tool call the pull continues in the background so the next
+  call works. Pre-pull to avoid the wait:
+  `docker pull python:3.12-alpine node:22-alpine alpine:3.22`. With
+  `pull: never` a missing image is an error. `bosun doctor` and the
+  integrations page show whether Docker is reachable and which images are
+  present.
+- **Custom images.** Only each language's standard library is available
+  (there is no network, so `pip install` cannot work inside a run). For extra
+  packages, build an image and point `images.<language>` at it. Any image
+  works if it has `sh` and `tar` (Alpine/BusyBox or Debian-based both do) and
+  the interpreter (`python3`, `node`, `sh`) on `PATH`; it runs as uid 65534
+  with a read-only root, so install packages system-wide at build time:
+
+  ```dockerfile
+  # docker build -t local/bosun-python-data:1 .
+  FROM python:3.12-slim
+  RUN pip install --no-cache-dir pandas matplotlib
+  ```
+
+  ```yaml
+  integrations:
+    sandbox:
+      images: { python: local/bosun-python-data:1 }
+      pull: never        # a local-only tag cannot be pulled
+  ```
+
+- Limits to know: the dispatcher bounds every tool call at 60 seconds, so a
+  run's effective limit is the smaller of `timeout` and what is left of that
+  (a run times out a few seconds early rather than being cut off). Docker
+  access is root-equivalent on the host for whoever has it: that is `bosund`,
+  never the model, which only chooses the code. In the Docker Compose setup
+  the sandbox needs the host's Docker socket; see
+  [docs/DEPLOY.md](docs/DEPLOY.md#code-sandbox-in-docker-compose) and prefer a
+  personal-machine install if you want it.
 
 ### Routines
 
