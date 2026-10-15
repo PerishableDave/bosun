@@ -95,7 +95,7 @@ policy:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, llm: fake.New("fake")}
+	h := &harness{t: t, llm: fake.New("fake"), turnTimeout: 90 * time.Second}
 	reg := llm.NewRegistry()
 	if err := reg.Register(h.llm); err != nil {
 		t.Fatal(err)

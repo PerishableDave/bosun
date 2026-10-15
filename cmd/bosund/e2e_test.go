@@ -81,6 +81,10 @@ type harness struct {
 	page  string // URL served by an httptest server
 	alice *auth.User
 	bob   *auth.User
+	// turnTimeout bounds one turn's stream (default 20s). Tests that start
+	// real Chromium raise it: a cold browser launch on a shared CI runner
+	// can take most of 20s on its own.
+	turnTimeout time.Duration
 }
 
 func newHarness(t *testing.T) *harness {
@@ -217,7 +221,11 @@ type sseEvent struct {
 // for each event as it arrives.
 func (h *harness) turn(tok, convID, text string, onEvent func(sseEvent)) []sseEvent {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	timeout := h.turnTimeout
+	if timeout == 0 {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	b, _ := json.Marshal(api.PostMessageRequest{Content: text})
 	req, _ := http.NewRequestWithContext(ctx, "POST", h.base+"/v1/conversations/"+convID+"/messages", strings.NewReader(string(b)))
