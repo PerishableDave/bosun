@@ -54,13 +54,14 @@ export function approvalCard({ id, tool, args, risk, scope, has_preview }) {
       buttons.querySelectorAll("button").forEach((b) => (b.disabled = false));
     }
   };
-  buttons.append(
+  buttons.append(...[
     h("button", { class: "btn primary", onclick: () => answer("approve") }, "Approve"),
     scope && risk !== "destructive"
       ? h("button", { class: "btn", onclick: () => answer("approve", true), title: "Also allow " + tool + " on " + scope + " from now on (undo on the Tools page or with bosun policy unset)" },
         "Approve and always allow on " + scope)
       : null,
-    h("button", { class: "btn", onclick: () => answer("deny") }, "Deny"));
+    h("button", { class: "btn", onclick: () => answer("deny") }, "Deny"),
+  ].filter(Boolean));
   return card;
 }
 

@@ -352,7 +352,7 @@
     const d = document.createElement("div");
     d.id = id;
     d.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;box-sizing:border-box;" +
-      "border:4px solid #e0115f;border-radius:4px;box-shadow:0 0 0 4000px rgba(0,0,0,.25);" +
+      "border:4px solid #e0115f;border-radius:4px;box-shadow:0 0 0 4000px rgba(0,0,0,.12);" +
       "left:" + (r.left - 6) + "px;top:" + (r.top - 6) + "px;width:" + (r.width + 12) + "px;height:" + (r.height + 12) + "px";
     document.documentElement.appendChild(d);
     return { ok: true };
