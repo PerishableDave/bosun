@@ -35,6 +35,30 @@ type chatSession struct {
 	color       bool
 
 	midLine bool // assistant text was printed without a trailing newline
+
+	title      string // the conversation's latest known title
+	shownTitle string // the title last printed
+}
+
+// showTitle prints the conversation title if it is known and has not been
+// printed yet (it changes after the first turns: auto-titling).
+func (c *chatSession) showTitle() {
+	if c.title == "" || c.title == c.shownTitle {
+		return
+	}
+	c.endLine()
+	fmt.Fprintln(c.out, c.dim("— "+c.title))
+	c.shownTitle = c.title
+}
+
+// loadTitle fetches the title of an existing conversation (resume).
+func (c *chatSession) loadTitle(ctx context.Context) error {
+	var resp api.ConversationResponse
+	if err := call(ctx, "GET", c.base+"/v1/conversations/"+url.PathEscape(c.convID), c.token, nil, &resp); err != nil {
+		return err
+	}
+	c.title = resp.Title
+	return nil
 }
 
 func (c *chatSession) dim(s string) string {
@@ -85,7 +109,7 @@ func (c *chatSession) create(ctx context.Context, title string) error {
 	if err := call(ctx, "POST", c.base+"/v1/conversations", c.token, api.CreateConversationRequest{Title: title}, &resp); err != nil {
 		return err
 	}
-	c.convID = resp.ID
+	c.convID, c.title = resp.ID, resp.Title
 	return nil
 }
 
@@ -111,6 +135,7 @@ func (c *chatSession) turn(ctx context.Context, content string) error {
 		return apiError(resp)
 	}
 
+	c.showTitle()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 4<<20)
 	var evType string
@@ -185,7 +210,23 @@ func (c *chatSession) handle(ctx context.Context, typ, data string) (done bool, 
 		}
 		c.endLine()
 		fmt.Fprintln(c.out, c.dim(fmt.Sprintf("  approval %s: %s", d.ApprovalID, resolvedWord(d.Decision))))
+	case events.TypeConversationUpdated:
+		var d events.ConversationUpdatedData
+		if err := json.Unmarshal([]byte(data), &d); err != nil {
+			return false, fmt.Errorf("bad %s event: %w", typ, err)
+		}
+		if d.Title != "" {
+			c.title = d.Title
+			if !c.midLine {
+				c.showTitle()
+			}
+		}
 	case events.TypeDone:
+		var d events.DoneData
+		if json.Unmarshal([]byte(data), &d) == nil && d.Stopped {
+			c.endLine()
+			fmt.Fprintln(c.out, c.dim("(stopped)"))
+		}
 		return true, nil
 	case events.TypeError:
 		var d events.ErrorData
@@ -302,6 +343,8 @@ func newChatCmd(g *globals) *cobra.Command {
 				if err := c.create(ctx, title); err != nil {
 					return err
 				}
+			} else if err := c.loadTitle(ctx); err != nil {
+				return err
 			}
 			if len(args) == 1 {
 				if strings.TrimSpace(args[0]) == "" {

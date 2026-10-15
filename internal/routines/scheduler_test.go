@@ -354,8 +354,24 @@ func TestAgentRunner(t *testing.T) {
 		}
 		bus.Publish(userID, events.Event{Type: events.TypeApprovalResolved, Data: events.ApprovalResolvedData{ApprovalID: "appr_1", ConversationID: convID}})
 	}
+	sub := bus.Subscribe(f.alice, 0)
+	defer sub.Close()
 	started, _ := f.st.MarkStarted(ctx, r, SourceManual, "")
 	run, err := ar.RunRoutine(ctx, r, Invocation{Run: started})
+	// The reply marks the conversation unread, announced to the owner.
+	var unreadEv bool
+	for len(sub.C) > 0 {
+		if d, ok := (<-sub.C).Data.(events.ConversationUpdatedData); ok {
+			unreadEv = d.Unread && d.ID == run.ConversationID && d.Title == "routine: brief"
+		}
+	}
+	if !unreadEv {
+		t.Error("no conversation_updated with unread for the run's conversation")
+	}
+	if c, err := f.db.GetConversation(ctx, f.alice, run.ConversationID); err != nil || !c.Unread ||
+		c.Source != store.SourceRoutine || c.RoutineName != "brief" {
+		t.Errorf("routine conversation = %+v, %v", c, err)
+	}
 	if err != nil || run.Status != StatusDone || run.Reply != "Checking.\n\nAll done." || run.ConversationID == "" {
 		t.Fatalf("run = %+v, %v", run, err)
 	}

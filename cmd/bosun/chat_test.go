@@ -43,6 +43,14 @@ func newFake(t *testing.T, script func(f *fakeServer, w http.ResponseWriter, msg
 		w.WriteHeader(201)
 		fmt.Fprint(w, `{"id":"conv_1","title":"","created_at":"2026-10-12T22:00:00Z"}`)
 	})
+	mux.HandleFunc("GET /v1/conversations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "conv_1" {
+			w.WriteHeader(404)
+			fmt.Fprint(w, `{"error":{"code":"not_found","message":"conversation not found"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":"conv_1","title":"Old chat","created_at":"2026-10-12T22:00:00Z","messages":[]}`)
+	})
 	mux.HandleFunc("POST /v1/conversations/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		var req api.PostMessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || r.PathValue("id") != "conv_1" {
@@ -209,8 +217,11 @@ func TestChatCommandsEndToEnd(t *testing.T) {
 		t.Errorf("chat one-shot: %v %q", err, out)
 	}
 	out, err = runCLI(t, "yo\n", args("chat", "-c", "conv_1")...)
-	if err != nil || !strings.Contains(out, "> hi\n") {
+	if err != nil || !strings.Contains(out, "— Old chat\nhi\n") {
 		t.Errorf("chat repl: %v %q", err, out)
+	}
+	if _, err = runCLI(t, "yo\n", args("chat", "-c", "conv_nope")...); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("chat resume of an unknown conversation: %v", err)
 	}
 	out, err = runCLI(t, "", args("approvals", "list")...)
 	if err != nil || !strings.Contains(out, "appr_9  email.send  [write]") || !strings.Contains(out, `{"to":"a@b.c"}`) {
@@ -226,6 +237,27 @@ func TestChatCommandsEndToEnd(t *testing.T) {
 }
 
 func writeFile(path, s string) error { return os.WriteFile(path, []byte(s), 0o600) }
+
+// TestChatTitleAndStop: the title announced in the stream is printed once,
+// before the reply; a stopped turn says so.
+func TestChatTitleAndStop(t *testing.T) {
+	f := newFake(t, func(f *fakeServer, w http.ResponseWriter, msg string) {
+		sse(w,
+			[2]string{"conversation_updated", `{"id":"conv_1","title":"Lisbon trip","title_source":"auto","conversation_id":"conv_1"}`},
+			[2]string{"text", `{"delta":"Half"}`},
+			[2]string{"done", `{"conversation_id":"conv_1","stopped":true}`})
+	})
+	c, out, _ := newSession(f, "")
+	c.convID = "conv_1"
+	for i := 0; i < 2; i++ {
+		if err := c.turn(context.Background(), "plan"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := out.String(); got != "— Lisbon trip\nHalf\n(stopped)\nHalf\n(stopped)\n" {
+		t.Errorf("out = %q", got)
+	}
+}
 
 // TestChatApprovalAlwaysOnSite: a scoped, non-destructive approval offers
 // "always on <site>"; a destructive one does not (and "a" then denies).
