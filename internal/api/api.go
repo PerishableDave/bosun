@@ -95,6 +95,10 @@ type Options struct {
 	// Doctor runs the daemon-side health checks for GET /v1/doctor (admin
 	// only). Nil answers 501.
 	Doctor func(ctx context.Context) []doctor.Check
+
+	// Browser controls the browser integration's per-user Chromium behind
+	// /v1/browser. Nil (integration disabled) answers 501.
+	Browser Browser
 }
 
 // Server holds API dependencies.
@@ -136,6 +140,8 @@ type Server struct {
 	trustedProxies []*net.IPNet
 	proxyStats     *ProxyStats
 	doctor         func(ctx context.Context) []doctor.Check
+
+	browser Browser
 }
 
 // New returns a Server. Auth and Bus are required.
@@ -154,6 +160,7 @@ func New(o Options) (*Server, error) {
 	s.users = o.Users
 	s.inviteAccepts = newRateLimiter(InviteAcceptsPerMinute, time.Minute)
 	s.trustedProxies, s.proxyStats, s.doctor = o.TrustedProxies, o.ProxyStats, o.Doctor
+	s.browser = o.Browser
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -186,6 +193,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/conversations/{id}/messages", authed(s.handlePostMessage))
 	mux.Handle("GET /v1/approvals", authed(s.handleListApprovals))
 	mux.Handle("POST /v1/approvals/{id}", authed(s.handleResolveApproval))
+	mux.Handle("GET /v1/approvals/{id}/preview", authed(s.handleApprovalPreview))
+	mux.Handle("GET /v1/browser", authed(s.handleBrowserStatus))
+	mux.Handle("GET /v1/browser/screenshot", authed(s.handleBrowserScreenshot))
+	mux.Handle("POST /v1/browser/stop", authed(s.handleBrowserStop))
 	mux.Handle("GET /v1/policy", authed(s.handleGetPolicy))
 	mux.Handle("PUT /v1/policy/{capability}", authed(s.handleSetPolicyRule))
 	mux.Handle("DELETE /v1/policy/{capability}", authed(s.handleDeletePolicyRule))

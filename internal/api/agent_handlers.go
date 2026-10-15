@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +38,26 @@ type Approvals interface {
 	ListPending(ctx context.Context, userID int64) ([]*approval.Approval, error)
 	Resolve(ctx context.Context, id string, userID int64, d approval.Decision) error
 	Get(ctx context.Context, id string, userID int64) (*approval.Approval, error)
+}
+
+// ApprovalsAlways is optionally implemented by Approvals (as
+// *approval.StoreManager does) to support "approve and always allow on
+// <scope>".
+type ApprovalsAlways interface {
+	ResolveAlways(ctx context.Context, id string, userID int64) error
+}
+
+// ApprovalPreviews is optionally implemented by Approvals (as
+// *approval.StoreManager does) to serve preview images.
+type ApprovalPreviews interface {
+	PreviewFile(ctx context.Context, id string, userID int64) (path, mime string, err error)
+}
+
+// ScopedPolicyRules is optionally implemented by PolicyRules (as
+// *policy.StoreEngine does) to manage site-scoped rules (?scope=).
+type ScopedPolicyRules interface {
+	SetScopedRule(ctx context.Context, userID int64, c integration.Capability, scope string, d policy.Decision) (policy.Rule, error)
+	DeleteScopedRule(ctx context.Context, userID int64, c integration.Capability, scope string) error
 }
 
 // PolicyRules is the subset of *policy.StoreEngine the API needs.
@@ -296,6 +318,10 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 // ResolveApprovalRequest is the body of POST /v1/approvals/{id}.
 type ResolveApprovalRequest struct {
 	Decision string `json:"decision"` // "approve" | "deny"
+	// Always, with decision "approve" on a scoped approval, also creates
+	// the caller's "allow" rule for the approval's capability on its scope
+	// ("approve and always allow on <scope>").
+	Always bool `json:"always,omitempty"`
 }
 
 // ApprovalListResponse is the body of GET /v1/approvals.
@@ -336,9 +362,22 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _ := UserFromContext(r.Context())
 	id := r.PathValue("id")
-	err := s.approvals.Resolve(r.Context(), id, u.ID, d)
+	var err error
+	if req.Always {
+		al, ok := s.approvals.(ApprovalsAlways)
+		if d != approval.Approve || !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", `"always" requires decision "approve" on a server that supports scoped rules`)
+			return
+		}
+		err = al.ResolveAlways(r.Context(), id, u.ID)
+	} else {
+		err = s.approvals.Resolve(r.Context(), id, u.ID, d)
+	}
 	switch {
 	case err == nil:
+	case errors.Is(err, approval.ErrNoScope):
+		writeError(w, http.StatusBadRequest, "bad_request", "this approval has no scope; approve it without \"always\"")
+		return
 	case errors.Is(err, approval.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", "approval belongs to another user")
 		return
@@ -355,12 +394,59 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "resolve approval", err)
 		return
 	}
+	if req.Always {
+		if a, gerr := s.approvals.Get(r.Context(), id, u.ID); gerr == nil {
+			s.recordConfigScoped(r.Context(), u.ID, a.Capability, a.Scope, "allow", "policy rule set from approval "+id)
+		}
+	}
 	a, err := s.approvals.Get(r.Context(), id, u.ID)
 	if err != nil {
 		s.internalError(w, r, "get approval", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, a)
+}
+
+// handleApprovalPreview serves GET /v1/approvals/{id}/preview: the preview
+// image of one of the caller's pending approvals.
+func (s *Server) handleApprovalPreview(w http.ResponseWriter, r *http.Request) {
+	pv, ok := s.approvals.(ApprovalPreviews)
+	if s.approvals == nil || !ok {
+		notImplemented(w)
+		return
+	}
+	u, _ := UserFromContext(r.Context())
+	path, mime, err := pv.PreviewFile(r.Context(), r.PathValue("id"), u.ID)
+	switch {
+	case err == nil:
+	case errors.Is(err, approval.ErrNotFound), errors.Is(err, approval.ErrForbidden), errors.Is(err, approval.ErrNoPreview):
+		writeError(w, http.StatusNotFound, "not_found", "no preview for that approval")
+		return
+	default:
+		s.internalError(w, r, "approval preview", err)
+		return
+	}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) { // resolved in the meantime
+		writeError(w, http.StatusNotFound, "not_found", "no preview for that approval")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "read approval preview", err)
+		return
+	}
+	writeImage(w, mime, b)
+}
+
+// writeImage sends an image the client must not cache or sniff.
+func writeImage(w http.ResponseWriter, mime string, b []byte) {
+	h := w.Header()
+	h.Set("Content-Type", mime)
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Security-Policy", "default-src 'none'")
+	h.Set("Content-Length", strconv.Itoa(len(b)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
 }
 
 // --- policy ---
@@ -374,9 +460,12 @@ type PolicyDefaultsResponse struct {
 
 // PolicyRuleResponse is one explicit rule.
 type PolicyRuleResponse struct {
-	Capability string    `json:"capability"`
-	Decision   string    `json:"decision"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Capability string `json:"capability"`
+	// Scope is the site the rule is limited to; omitted for the
+	// capability-wide rule.
+	Scope     string    `json:"scope,omitempty"`
+	Decision  string    `json:"decision"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // PolicyResponse is the body of GET /v1/policy.
@@ -391,7 +480,7 @@ type SetPolicyRuleRequest struct {
 }
 
 func toRule(r policy.Rule) PolicyRuleResponse {
-	return PolicyRuleResponse{Capability: string(r.Capability), Decision: string(r.Decision), UpdatedAt: r.UpdatedAt}
+	return PolicyRuleResponse{Capability: string(r.Capability), Scope: r.Scope, Decision: string(r.Decision), UpdatedAt: r.UpdatedAt}
 }
 
 func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
@@ -457,14 +546,44 @@ func (s *Server) handleSetPolicyRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "unknown capability (see GET /v1/tools)")
 		return
 	}
+	scope, ok := s.scopeParam(w, r)
+	if !ok {
+		return
+	}
 	u, _ := UserFromContext(r.Context())
-	rule, err := s.policy.SetRule(r.Context(), u.ID, c, d)
+	var rule policy.Rule
+	var err error
+	if scope != "" {
+		rule, err = s.policy.(ScopedPolicyRules).SetScopedRule(r.Context(), u.ID, c, scope, d)
+	} else {
+		rule, err = s.policy.SetRule(r.Context(), u.ID, c, d)
+	}
 	if err != nil {
 		s.internalError(w, r, "set policy rule", err)
 		return
 	}
-	s.recordConfig(r.Context(), u.ID, c, string(d), "policy rule set")
+	s.recordConfigScoped(r.Context(), u.ID, c, scope, string(d), "policy rule set")
 	writeJSON(w, http.StatusOK, toRule(rule))
+}
+
+// scopeParam returns the normalized ?scope= of a policy request ("" when
+// absent). It answers 400 for a value that is not a site and 501 when the
+// engine has no scoped rules.
+func (s *Server) scopeParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	raw := r.URL.Query().Get("scope")
+	if raw == "" {
+		return "", true
+	}
+	scope := integration.NormalizeScope(raw)
+	if scope == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "scope must be a site, e.g. opentable.com")
+		return "", false
+	}
+	if _, ok := s.policy.(ScopedPolicyRules); !ok {
+		notImplemented(w)
+		return "", false
+	}
+	return scope, true
 }
 
 func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) {
@@ -473,8 +592,17 @@ func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	c := integration.Capability(r.PathValue("capability"))
+	scope, ok := s.scopeParam(w, r)
+	if !ok {
+		return
+	}
 	u, _ := UserFromContext(r.Context())
-	err := s.policy.DeleteRule(r.Context(), u.ID, c)
+	var err error
+	if scope != "" {
+		err = s.policy.(ScopedPolicyRules).DeleteScopedRule(r.Context(), u.ID, c, scope)
+	} else {
+		err = s.policy.DeleteRule(r.Context(), u.ID, c)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "no rule for that capability")
 		return
@@ -483,8 +611,20 @@ func (s *Server) handleDeletePolicyRule(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "delete policy rule", err)
 		return
 	}
-	s.recordConfig(r.Context(), u.ID, c, "", "policy rule deleted (risk default applies)")
+	note := "policy rule deleted (risk default applies)"
+	if scope != "" {
+		note = "scoped policy rule deleted"
+	}
+	s.recordConfigScoped(r.Context(), u.ID, c, scope, "", note)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordConfigScoped is recordConfig noting the scope, if any.
+func (s *Server) recordConfigScoped(ctx context.Context, userID int64, c integration.Capability, scope, decision, note string) {
+	if scope != "" {
+		note += " (scope " + scope + ")"
+	}
+	s.recordConfig(ctx, userID, c, decision, note)
 }
 
 func (s *Server) recordConfig(ctx context.Context, userID int64, c integration.Capability, decision, note string) {

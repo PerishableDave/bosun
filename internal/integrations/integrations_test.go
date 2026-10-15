@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ const modulePath = "github.com/perishabledave/bosun"
 // exactAllow.
 var forbiddenExact = []string{"os/exec"}
 
-// exactAllow names, per forbidden import, the single integration directory
+// exactAllow names, per forbidden import, the integration directories
 // (relative to internal/integrations) allowed to use it.
 //
 // os/exec: the MCP bridge (internal/integrations/mcp) must spawn stdio MCP
@@ -27,7 +28,16 @@ var forbiddenExact = []string{"os/exec"}
 // exemption covers that one package directory only: not its subpackages
 // (e.g. mcp/mcptest) and not any other integration. The bridge gives
 // children a minimal environment rather than the daemon's.
-var exactAllow = map[string]string{"os/exec": "mcp"}
+//
+// os/exec: the browser integration (internal/integrations/browser) must
+// launch Chromium, which is a separate process by definition; chromedp's
+// allocator starts it and the integration only uses *exec.Cmd to put the
+// browser in its own process group (so stopping a session kills its helper
+// processes). Same scope as the MCP exemption: that one package directory,
+// not its subpackages. The browser gets a minimal environment, its own
+// profile directory, a pipe (not a TCP port) for DevTools, and an
+// SSRF-guarded proxy; it executes nothing else.
+var exactAllow = map[string][]string{"os/exec": {"mcp", "browser"}}
 
 // forbiddenPrefix are module packages (and their subpackages) no integration
 // may use.
@@ -47,7 +57,7 @@ const integrationsPkg = modulePath + "/internal/integrations"
 func checkImport(own, dir, imp string) string {
 	for _, f := range forbiddenExact {
 		if imp == f {
-			if allowed, ok := exactAllow[f]; ok && dir == allowed {
+			if slices.Contains(exactAllow[f], dir) {
 				continue
 			}
 			return "imports " + imp
@@ -175,6 +185,12 @@ import "os/exec"`)
 import "os/exec"`)
 	write("mcpx/x.go", `package mcpx
 import "os/exec"`)
+	// So may the browser integration (it launches Chromium); not its
+	// subpackages.
+	write("browser/launch.go", `package browser
+import "os/exec"`)
+	write("browser/sub/sub.go", `package sub
+import "os/exec"`)
 
 	violations, err := scan(root)
 	if err != nil {
@@ -201,7 +217,13 @@ import "os/exec"`)
 	if strings.Contains(joined, "stdio.go") {
 		t.Errorf("mcp/stdio.go must be allowed to import os/exec:\n%s", joined)
 	}
-	if len(violations) != 11 {
-		t.Errorf("got %d violations, want 11:\n%s", len(violations), joined)
+	if strings.Contains(joined, "launch.go") {
+		t.Errorf("browser/launch.go must be allowed to import os/exec:\n%s", joined)
+	}
+	if !strings.Contains(joined, "browser/sub/sub.go") && !strings.Contains(joined, filepath.Join("browser", "sub", "sub.go")) {
+		t.Errorf("browser/sub must not be allowed to import os/exec:\n%s", joined)
+	}
+	if len(violations) != 12 {
+		t.Errorf("got %d violations, want 12:\n%s", len(violations), joined)
 	}
 }
