@@ -372,6 +372,42 @@ small, run Ollama on a desktop with a GPU and point
 - Set `TZ` in `.env` (or `daemon.timezone`) so routines fire at your local
   time; the container defaults to UTC.
 
+### Code sandbox in Docker Compose
+
+The [code sandbox](../README.md#sandbox-run-code) (`sandbox.run`) starts a
+throwaway Docker container per run, so `bosund` needs a Docker daemon. On a
+personal machine (section A) it simply uses your Docker Desktop or Docker
+Engine: **that is the recommended setup if you want the sandbox.**
+
+Inside the compose setup the bosun container has no Docker access, and the
+compose file deliberately does **not** mount the Docker socket: access to
+`/var/run/docker.sock` is **root-equivalent on the host** (anything that can
+talk to it can start a privileged container that mounts `/`). Bosun only ever
+starts locked-down containers and the model never sees the socket, but a
+compromise of the bosun container would become a compromise of the host.
+
+If you accept that, the opt-in overlay
+[deploy/docker/compose.sandbox.yml](../deploy/docker/compose.sandbox.yml)
+builds a local image with the docker CLI, mounts the socket and adds the
+socket's group (it is an overlay file rather than a profile because a profile
+cannot add a mount to the existing `bosun` service):
+
+```sh
+export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+docker compose -f compose.yml -f compose.sandbox.yml up -d --build
+docker compose exec bosun vi /data/bosun.yaml   # integrations: {sandbox: {enabled: true}}
+docker compose restart bosun
+docker compose exec bosun bosun doctor          # sandbox: docker reachable, images
+```
+
+Keep passing both `-f` files for later `up`/`pull` commands, or put
+`COMPOSE_FILE=compose.yml:compose.sandbox.yml` in `.env`. Sandbox containers
+are siblings on the host's Docker (named `bosun-sbx-*`, labelled
+`bosun.sandbox=1`); no host paths are mounted into them, so no path mapping
+is needed. Pre-pull the images on the host
+(`docker pull python:3.12-alpine node:22-alpine alpine:3.22`) to avoid the
+wait on first use.
+
 ---
 
 ## Security checklist
@@ -400,5 +436,8 @@ small, run Ollama on a desktop with a GPU and point
   (`.env` for compose, mode 0600; `~/.bosun/env` for a service, mode 0600) or
   the vault (`bosun credentials set llm anthropic --shared`); account passwords and tokens
   are only ever in the encrypted vault.
+- **The Docker socket is never mounted by default.** The code sandbox in
+  compose needs it and it is root-equivalent on the host; see
+  [Code sandbox in Docker Compose](#code-sandbox-in-docker-compose).
 - **Keep it updated** (`brew upgrade`, the install script, or
   `docker compose pull`).

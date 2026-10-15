@@ -43,6 +43,7 @@ untrusted.
 | `calendar` | CalDAV + iCalendar, Google CalDAV with OAuth; read-only ICS feeds | calendars, events, get, create, update, delete, freebusy | RRULE expansion for the common cases. ICS backend: credential kinds `ics` / `ics:<name>` hold a private feed URL (Google "Secret address in iCal format", Outlook.com published calendar, iCloud public calendar); fetched over https with an SSRF guard, 5 MB cap and 5-minute per-user cache, merged as read-only calendars |
 | `files` | Local folders the admin lists (`roots`), as the daemon's OS user | roots, list, search, read, stat, write, append, move, mkdir, delete (destructive) | Shared across the household, results untrusted; symlink-escape and hidden-file guards; atomic writes, explicit `overwrite`; PDFs not parsed (sandbox integration) |
 | `channels/telegram` | Bot API, long polling | chat, inline Approve/Deny, routine deliveries | First channel; the `channels` framework is designed for Slack/Discord/iMessage next |
+| `sandbox` | Docker CLI (`docker run`) | run (write: Python, Node or shell) | Code execution without a shell on the host: a fresh container per run with no network, no host mounts, read-only root, uid 65534, no capabilities, memory/CPU/pids/time limits. Inputs and outputs travel as tar over stdin/stdout. Pinned Alpine images pulled on first use, or an admin's custom image (e.g. with pandas). Off by default |
 
 ## Wave 2 (planned)
 

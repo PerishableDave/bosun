@@ -29,7 +29,11 @@ FROM alpine:${ALPINE_VERSION}
 # ca-certificates: TLS to LLM providers, mail and calendar servers.
 # tzdata: routine schedules in daemon.timezone / TZ.
 # openssl: first-run self-signed certificate (see entrypoint.sh).
+# WITH_DOCKER_CLI=true adds the docker CLI for the code sandbox; only the
+# opt-in compose.sandbox.yml overlay sets it (see docs/DEPLOY.md).
+ARG WITH_DOCKER_CLI=false
 RUN apk add --no-cache ca-certificates tzdata openssl && \
+    if [ "$WITH_DOCKER_CLI" = "true" ]; then apk add --no-cache docker-cli; fi && \
     addgroup -g 1000 bosun && \
     adduser -D -H -u 1000 -G bosun -h /data -s /sbin/nologin bosun && \
     mkdir -p /data && chown bosun:bosun /data && chmod 700 /data

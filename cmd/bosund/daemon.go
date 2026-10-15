@@ -31,6 +31,7 @@ import (
 	"github.com/perishabledave/bosun/internal/integrations/files"
 	"github.com/perishabledave/bosun/internal/integrations/mcp"
 	"github.com/perishabledave/bosun/internal/integrations/notes"
+	"github.com/perishabledave/bosun/internal/integrations/sandbox"
 	"github.com/perishabledave/bosun/internal/integrations/websearch"
 	"github.com/perishabledave/bosun/internal/llm"
 	"github.com/perishabledave/bosun/internal/llm/providers"
@@ -51,9 +52,10 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
-	"files": func(*slog.Logger) integration.Integration { return files.New() },
-	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
-	"email": func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
+	"files":   func(*slog.Logger) integration.Integration { return files.New() },
+	"notes":   func(*slog.Logger) integration.Integration { return notes.New() },
+	"email":   func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
+	"sandbox": func(log *slog.Logger) integration.Integration { return sandbox.New(sandbox.WithLogger(log)) },
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
