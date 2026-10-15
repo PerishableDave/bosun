@@ -140,9 +140,15 @@ function showApp(user) {
   };
   const openDrawer = (v) => {
     shell.classList.toggle("drawer-open", v);
+    // The page behind an open drawer can't be scrolled, tapped or focused.
+    const main = shell.querySelector(".main");
+    if (main) main.inert = v;
     if (v) sidebar.querySelector(".side-new")?.focus();
   };
   const toggleSidebar = () => (isPhone() ? openDrawer(!shell.classList.contains("drawer-open")) : setCollapsed(!shell.classList.contains("collapsed")));
+  // Leaving phone width (rotation, resize) closes the drawer so the page
+  // isn't left inert behind a sidebar that is no longer a drawer.
+  window.matchMedia("(max-width: 768px)").addEventListener("change", (e) => { if (!e.matches) openDrawer(false); });
 
   const chat = createChat({ setHeader: (x) => { if (route.current === "chat") setHeader(x); }, navigate: (hash) => { location.hash = hash; } });
   const list = createConvList({

@@ -38,7 +38,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+/* The app is a fixed shell: only inner panes scroll, never the document. */
+html, body { height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
 body { background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
 #app { height: 100%; height: 100dvh; display: flex; flex-direction: column; }
 [hidden] { display: none !important; }
@@ -339,10 +340,21 @@ input[type=search] { width: 100%; margin-bottom: 10px; }
 .keys td { padding: 5px 16px 5px 0; }
 
 /* ---------- phone ---------- */
+/* iOS Safari zooms the page when a focused field's text is under 16px. */
+@media (max-width: 768px), (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+}
 @media (max-width: 768px) {
-  .sidebar { position: fixed; z-index: 30; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); margin-left: 0 !important; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility 0s .2s; }
+  /* The whole drawer is one scroller (on short screens the nav links leave
+     the conversation list no room of its own), and scrolling never chains
+     to the page behind it. */
+  .sidebar { position: fixed; z-index: 30; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); margin-left: 0 !important; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility 0s .2s; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .sidebar .conv-scroll { flex: none; min-height: auto; overflow: visible; }
+  .sidebar .side-head { position: sticky; top: 0; z-index: 1; background: var(--side); }
+  .sidebar .side-foot { position: sticky; bottom: 0; margin-top: auto; background: var(--side); }
   .shell.drawer-open .sidebar { transform: none; visibility: visible; box-shadow: var(--shadow); transition: transform .2s ease; }
-  .shell.drawer-open .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.4); }
+  .shell.drawer-open .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.4); touch-action: none; }
+  .shell.drawer-open .main { overflow: hidden; }
   .topbar .open-side { display: inline-grid !important; }
   .collapse-side { display: none; }
   .side-head .close-side { display: inline-grid; }
