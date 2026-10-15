@@ -5,6 +5,7 @@ import { renderChat } from "./chat.js";
 import { h } from "./dom.js";
 import { renderTools, renderMemory } from "./pages.js";
 import { renderUsers, acceptInviteForm } from "./users.js";
+import { renderBrowser } from "./browser.js";
 
 const root = document.getElementById("app");
 // [id, label, render(el, user), adminOnly]
@@ -13,6 +14,7 @@ const ALL_PAGES = [
   ["tools", "Tools", renderTools],
   ["memory", "Memory", renderMemory],
   ["approvals", "Approvals", renderApprovalsPage],
+  ["browser", "Browser", renderBrowser],
   ["users", "Users", renderUsers, true],
 ];
 

@@ -24,7 +24,7 @@ var contentTypes = map[string]string{
 
 // csp restricts the page to its own origin; the UI needs no inline script,
 // inline style, or third-party resource.
-const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // Handler serves "/" (index.html, never cached) and "/static/..." (the
 // assets). Any other path is a 404. Mount it for everything outside /v1/.

@@ -1,6 +1,6 @@
 // Approval cards (used inline in chat and on the Approvals page) and the
 // global pending-approvals state fed by GET /v1/approvals and GET /v1/events.
-import { api, stream } from "./api.js";
+import { api, stream, imageURL } from "./api.js";
 import { h, shortJSON } from "./dom.js";
 
 export const pending = {
@@ -16,9 +16,9 @@ export const pending = {
 
 // resolve answers an approval. A 409 (someone else answered first) is not an
 // error for the user; the approval_resolved event updates the card.
-export async function resolve(id, decision) {
+export async function resolve(id, decision, always) {
   try {
-    await api("POST", "/v1/approvals/" + encodeURIComponent(id), { decision });
+    await api("POST", "/v1/approvals/" + encodeURIComponent(id), always ? { decision, always: true } : { decision });
   } catch (e) {
     if (e.status !== 409) throw e;
   }
@@ -26,18 +26,29 @@ export async function resolve(id, decision) {
 
 const LABEL = { approve: "Approved", deny: "Denied", expired: "Expired", canceled: "Canceled" };
 
-// approvalCard renders {id, tool, args, risk} with Approve/Deny buttons.
-export function approvalCard({ id, tool, args, risk }) {
+// approvalCard renders {id, tool, args, risk, scope, has_preview} with
+// Approve/Deny buttons, the preview image if there is one, and "Approve and
+// always allow on <scope>" for scoped, non-destructive approvals.
+export function approvalCard({ id, tool, args, risk, scope, has_preview }) {
   const status = h("span", { class: "appr-status" });
   const buttons = h("span", { class: "appr-actions" });
+  const preview = has_preview ? h("a", { class: "appr-preview", target: "_blank", rel: "noopener", title: "Open full size" }) : null;
   const card = h("div", { class: "approval", "data-approval-id": id },
-    h("div", { class: "appr-head" }, "Approval needed: ", h("strong", {}, tool), " ", h("span", { class: "risk risk-" + risk }, risk)),
-    h("code", { class: "appr-args" }, shortJSON(args, 300)),
+    h("div", { class: "appr-head" }, "Approval needed: ", h("strong", {}, tool), " ", h("span", { class: "risk risk-" + risk }, risk),
+      scope ? h("span", { class: "appr-scope" }, " on ", h("strong", {}, scope)) : null),
+    preview,
+    h("code", { class: "appr-args" }, shortJSON(args, 600)),
     h("div", { class: "appr-foot" }, buttons, status));
-  const answer = async (decision) => {
+  if (preview) {
+    imageURL("/v1/approvals/" + encodeURIComponent(id) + "/preview").then((u) => {
+      preview.href = u;
+      preview.append(h("img", { src: u, alt: "Preview of what this action will do" }));
+    }).catch(() => preview.remove());
+  }
+  const answer = async (decision, always) => {
     buttons.querySelectorAll("button").forEach((b) => (b.disabled = true));
     try {
-      await resolve(id, decision);
+      await resolve(id, decision, always);
     } catch (e) {
       status.textContent = e.message;
       buttons.querySelectorAll("button").forEach((b) => (b.disabled = false));
@@ -45,6 +56,10 @@ export function approvalCard({ id, tool, args, risk }) {
   };
   buttons.append(
     h("button", { class: "btn primary", onclick: () => answer("approve") }, "Approve"),
+    scope && risk !== "destructive"
+      ? h("button", { class: "btn", onclick: () => answer("approve", true), title: "Also allow " + tool + " on " + scope + " from now on (undo on the Tools page or with bosun policy unset)" },
+        "Approve and always allow on " + scope)
+      : null,
     h("button", { class: "btn", onclick: () => answer("deny") }, "Deny"));
   return card;
 }
@@ -94,7 +109,7 @@ export function renderApprovalsPage(el) {
       h("h2", {}, "Pending approvals"),
       list.length === 0 ? h("p", { class: "muted" }, "Nothing is waiting for you.") : null,
       list.map((a) => h("div", { class: "approval-row" },
-        approvalCard({ id: a.id, tool: a.tool, args: a.args, risk: a.risk }),
+        approvalCard({ id: a.id, tool: a.tool, args: a.args, risk: a.risk, scope: a.scope, has_preview: a.has_preview }),
         h("div", { class: "muted small" }, a.conversation_id ? "conversation " + a.conversation_id : "no conversation")))));
   };
   draw(pending.list);

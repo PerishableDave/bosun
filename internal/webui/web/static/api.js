@@ -48,6 +48,14 @@ export async function api(method, path, body) {
   return res.status === 204 ? null : res.json();
 }
 
+// imageURL fetches an image (with the bearer token, which <img src> cannot
+// send) and returns an object URL for it; the caller revokes it.
+export async function imageURL(path) {
+  const res = await fetch(path, { headers: headers(false), cache: "no-store" });
+  if (!res.ok) throw await toError(res);
+  return URL.createObjectURL(await res.blob());
+}
+
 // stream issues a request and calls onEvent(type, data) for every SSE event
 // until the stream ends or signal aborts. It throws ApiError for a non-2xx
 // response (before streaming starts).

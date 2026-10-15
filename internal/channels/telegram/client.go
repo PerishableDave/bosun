@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -176,6 +178,11 @@ func (c *Client) callOnce(ctx context.Context, method string, params, out any) e
 		return fmt.Errorf("telegram %s: %s", method, c.redact(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return c.do(ctx, method, req, out)
+}
+
+// do sends a prepared Bot API request and decodes its result into out.
+func (c *Client) do(ctx context.Context, method string, req *http.Request, out any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -260,6 +267,37 @@ func (c *Client) EditMessageText(ctx context.Context, p EditMessageTextParams) e
 		return nil
 	}
 	return err
+}
+
+// SendPhoto uploads a PNG or JPEG image to chatID with an optional caption
+// (at most 1024 characters) and returns the message.
+func (c *Client) SendPhoto(ctx context.Context, chatID int64, photo []byte, filename, caption string) (*Message, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	if caption != "" {
+		_ = mw.WriteField("caption", caption)
+	}
+	fw, err := mw.CreateFormFile("photo", filename)
+	if err != nil {
+		return nil, fmt.Errorf("telegram sendPhoto: %w", err)
+	}
+	if _, err := fw.Write(photo); err != nil {
+		return nil, fmt.Errorf("telegram sendPhoto: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("telegram sendPhoto: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"sendPhoto", &buf)
+	if err != nil {
+		return nil, fmt.Errorf("telegram sendPhoto: %s", c.redact(err.Error()))
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	var m Message
+	if err := c.do(ctx, "sendPhoto", req, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 // AnswerCallbackQuery acknowledges a button press, optionally showing text.

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,6 +73,18 @@ var _ Store = (*store.Store)(nil)
 type Approvals interface {
 	Resolve(ctx context.Context, id string, userID int64, d approval.Decision) error
 	ListPending(ctx context.Context, userID int64) ([]*approval.Approval, error)
+}
+
+// ApprovalsAlways is optionally implemented by Approvals (as
+// *approval.StoreManager does): "approve and always allow on <site>".
+type ApprovalsAlways interface {
+	ResolveAlways(ctx context.Context, id string, userID int64) error
+}
+
+// ApprovalPreviews is optionally implemented by Approvals (as
+// *approval.StoreManager does): the preview image of a pending approval.
+type ApprovalPreviews interface {
+	PreviewFile(ctx context.Context, id string, userID int64) (path, mime string, err error)
 }
 
 // TokenFunc returns the bot token; "" with a nil error means "not
@@ -661,7 +674,8 @@ func (b *Bot) listApprovals(c *Client, userID, chatID int64) {
 		return
 	}
 	for _, a := range pending {
-		b.postApproval(c, a.ID, a.Tool, string(a.Risk), a.Args, []int64{chatID})
+		b.postApproval(c, a.UserID, approvalView{ID: a.ID, Tool: a.Tool, Risk: string(a.Risk), Args: a.Args,
+			Scope: a.Scope, HasPreview: a.HasPreview}, []int64{chatID})
 	}
 }
 
@@ -707,15 +721,48 @@ func compactArgs(raw json.RawMessage, max int) string {
 	return buf.String()
 }
 
-// postApproval sends an approval with Approve/Deny buttons to chats and
-// remembers the messages so they can be updated when it is resolved.
-func (b *Bot) postApproval(c *Client, id, tool, risk string, args json.RawMessage, chats []int64) {
-	text, ents := approvalText(tool, risk, args)
-	kb := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{
-		{Text: "Approve", CallbackData: callbackPrefix + id + ":y"},
-		{Text: "Deny", CallbackData: callbackPrefix + id + ":n"},
-	}}}
+// approvalView is what a chat shows of an approval.
+type approvalView struct {
+	ID, Tool, Risk string
+	Args           json.RawMessage
+	Scope          string
+	HasPreview     bool
+}
+
+// offerAlways reports whether to offer "always allow on <scope>": scoped,
+// non-destructive approvals only (a standing rule for destructive actions
+// should be a deliberate `bosun policy set`, not a button).
+func offerAlways(scope, risk string) bool { return scope != "" && risk != "destructive" }
+
+// postApproval sends an approval with Approve/Deny buttons (and "Always on
+// <site>" for scoped ones) to chats, preceded by its preview image if it has
+// one, and remembers the messages so they can be updated when it is
+// resolved.
+func (b *Bot) postApproval(c *Client, userID int64, v approvalView, chats []int64) {
+	id := v.ID
+	text, ents := approvalText(v.Tool, v.Risk, v.Args)
+	if v.Scope != "" {
+		line := "Site: " + v.Scope
+		text, ents = text+"\n\n"+line, append(ents, MessageEntity{Type: "italic", Offset: u16len(text + "\n\n"), Length: u16len(line)})
+	}
+	row := []InlineKeyboardButton{{Text: "Approve", CallbackData: callbackPrefix + id + ":y"}}
+	if _, ok := b.o.Approvals.(ApprovalsAlways); ok && offerAlways(v.Scope, v.Risk) {
+		row = append(row, InlineKeyboardButton{Text: "Always on " + clipRunes(v.Scope, 40), CallbackData: callbackPrefix + id + ":a"})
+	}
+	row = append(row, InlineKeyboardButton{Text: "Deny", CallbackData: callbackPrefix + id + ":n"})
+	kb := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{row}}
+	var photo []byte
+	if pv, ok := b.o.Approvals.(ApprovalPreviews); ok && v.HasPreview {
+		if path, _, err := pv.PreviewFile(b.ctx, id, userID); err == nil {
+			photo, _ = os.ReadFile(path)
+		}
+	}
 	for _, chatID := range chats {
+		if len(photo) > 0 {
+			if _, err := c.SendPhoto(b.ctx, chatID, photo, "preview.png", "Preview: "+clipRunes(v.Tool, 60)); err != nil {
+				b.log.Warn("telegram: send approval preview", "chat_id", chatID, "approval_id", id, "err", err)
+			}
+		}
 		m, err := c.SendMessage(b.ctx, SendMessageParams{ChatID: chatID, Text: text, Entities: ents, ReplyMarkup: kb})
 		if err != nil {
 			b.log.Warn("telegram: send approval", "chat_id", chatID, "approval_id", id, "err", err)
@@ -790,19 +837,28 @@ func (b *Bot) handleCallback(c *Client, q *CallbackQuery) {
 	}
 	rest, ok := strings.CutPrefix(q.Data, callbackPrefix)
 	id, verdict, ok2 := strings.Cut(rest, ":")
-	if !ok || !ok2 || id == "" || (verdict != "y" && verdict != "n") {
+	if !ok || !ok2 || id == "" || (verdict != "y" && verdict != "n" && verdict != "a") {
 		answer("Unknown action.")
 		return
 	}
 	d := approval.Deny
-	if verdict == "y" {
+	if verdict == "y" || verdict == "a" {
 		d = approval.Approve
 	}
-	err = b.o.Approvals.Resolve(b.ctx, id, link.UserID, d)
+	if al, isAl := b.o.Approvals.(ApprovalsAlways); verdict == "a" && isAl {
+		err = al.ResolveAlways(b.ctx, id, link.UserID)
+	} else if verdict == "a" {
+		answer("Unknown action.")
+		return
+	} else {
+		err = b.o.Approvals.Resolve(b.ctx, id, link.UserID, d)
+	}
 	b.log.Info("telegram: approval answered", "chat_id", m.Chat.ID, "approval_id", id, "decision", string(d), "ok", err == nil)
 	switch {
 	case err == nil:
-		if d == approval.Approve {
+		if verdict == "a" {
+			answer("Approved; allowed on this site from now on")
+		} else if d == approval.Approve {
 			answer("Approved")
 		} else {
 			answer("Denied")
@@ -811,6 +867,9 @@ func (b *Bot) handleCallback(c *Client, q *CallbackQuery) {
 		return
 	case errors.Is(err, approval.ErrAlreadyResolved):
 		answer("Already answered.")
+	case errors.Is(err, approval.ErrNoScope):
+		answer("This approval has no site; use Approve.")
+		return
 	case errors.Is(err, approval.ErrExpired):
 		answer("This approval expired.")
 	case errors.Is(err, approval.ErrNotFound), errors.Is(err, approval.ErrForbidden):
@@ -925,4 +984,12 @@ func (b *Bot) deliverRoutine(c *Client, userID int64, d events.RoutineFinishedDa
 		b.sendLong(c, chatID, header, body)
 		b.log.Info("telegram: routine result delivered", "chat_id", chatID, "routine_id", d.RoutineID, "run_id", d.RunID)
 	}
+}
+
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }

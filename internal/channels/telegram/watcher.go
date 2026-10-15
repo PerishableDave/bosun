@@ -205,7 +205,8 @@ func (b *Bot) handleEvent(w *watcher, ev events.Event) {
 		}
 		// Approvals from anywhere (this chat, the web UI, a routine) go to
 		// every linked chat, so they can be answered from the phone.
-		b.postApproval(c, d.ApprovalID, d.Tool, d.Risk, d.Args, b.chatsOf(w.userID))
+		b.postApproval(c, w.userID, approvalView{ID: d.ApprovalID, Tool: d.Tool, Risk: d.Risk, Args: d.Args,
+			Scope: d.Scope, HasPreview: d.HasPreview}, b.chatsOf(w.userID))
 	case events.ApprovalResolvedData:
 		b.approvalResolved(c, d.ApprovalID, d.Decision)
 	case events.DoneData:

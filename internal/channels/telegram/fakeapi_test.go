@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -82,9 +83,23 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"ok":false,"error_code":401,"description":"Unauthorized"}`)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
 	params := map[string]any{}
-	_ = json.Unmarshal(body, &params)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(8 << 20); err == nil {
+			for k, v := range r.MultipartForm.Value {
+				params[k] = v[0]
+			}
+			if id, err := strconv.ParseFloat(r.FormValue("chat_id"), 64); err == nil {
+				params["chat_id"] = id
+			}
+			for k, fhs := range r.MultipartForm.File {
+				params[k+"_bytes"] = float64(fhs[0].Size)
+			}
+		}
+	} else {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &params)
+	}
 	switch method {
 	case "getMe":
 		f.reply(w, User{ID: 999, IsBot: true, FirstName: "Bosun", Username: "bosun_test_bot"})

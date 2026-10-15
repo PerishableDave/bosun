@@ -149,7 +149,7 @@ export function renderChat(el) {
           break;
         case "approval_required":
           cur = null;
-          log.append(approvalCard({ id: d.approval_id, tool: d.tool, args: d.args, risk: d.risk }));
+          log.append(approvalCard({ id: d.approval_id, tool: d.tool, args: d.args, risk: d.risk, scope: d.scope, has_preview: d.has_preview }));
           break;
         case "error":
           finish(d.message);
