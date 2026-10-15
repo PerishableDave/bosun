@@ -58,6 +58,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newSetupCmd(g), newStatusCmd(g), newLoginCmd(g), newChatCmd(g), newApprovalsCmd(g),
 		newToolsCmd(g), newPolicyCmd(g), newMemoryCmd(g), newMCPCmd(g), newHooksCmd(g))
 	root.AddCommand(newRoutinesCmd(g))
+	root.AddCommand(newConversationsCmd(g))
 	root.AddCommand(newCredentialsCmd(g))
 	root.AddCommand(newConnectCmd(g))
 	root.AddCommand(newChannelsCmd(g))

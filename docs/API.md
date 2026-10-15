@@ -124,27 +124,92 @@ payload carries its `conversation_id`), so it is where a second client sees
 
 ### `POST /v1/conversations`
 
-Request (all fields optional; `title` is trimmed and cut to 200 bytes):
+Request (all fields optional; `title` is trimmed, control characters are
+dropped, and it is cut to 200 bytes):
 
 ```json
 { "title": "Morning planning" }
 ```
 
-Response `201`:
+A non-empty title is the user's (`title_source: "user"`, never changed
+automatically). An empty title, or a placeholder (`New chat`, `New
+conversation`, `Untitled`, case-insensitive), leaves `title_source: "auto"`:
+the conversation is then [titled automatically](#automatic-titles).
+
+Response `201`: the [conversation object](#conversation-object).
+
+#### Conversation object
+
+Returned by every conversation endpoint (the list, create, get, patch):
 
 ```json
-{ "id": "conv_3f2a…", "title": "Morning planning", "created_at": "2026-10-12T22:00:00Z", "updated_at": "2026-10-12T22:00:00Z" }
+{
+  "id": "conv_3f2a…",
+  "title": "Lisbon trip ideas",
+  "title_source": "auto",
+  "source": "chat",
+  "pinned": false,
+  "archived": false,
+  "unread": false,
+  "message_count": 4,
+  "last_message_at": "2026-10-12T22:05:00Z",
+  "last_message_preview": "Lisbon in October is mild; here is a three-day plan…",
+  "created_at": "2026-10-12T22:00:00Z",
+  "updated_at": "2026-10-12T22:05:00Z"
+}
 ```
+
+| Field | Meaning |
+|---|---|
+| `title_source` | `auto` (Bosun chose it, or will) or `user` (set at creation or by `PATCH`; never overwritten) |
+| `source` | `chat` (created through this API), `routine` (a routine run), or `telegram` (a Telegram chat) |
+| `routine_name` | Only on `source: "routine"`: the routine's name (from the title `routine: <name>` if the routine was deleted) |
+| `pinned`, `archived` | Set with `PATCH` |
+| `unread` | A routine reply landed that the user has not opened; cleared by `POST …/read` |
+| `message_count` | Number of user and assistant messages (tool-result messages are not counted) |
+| `last_message_at` | Time of the newest stored message (any role); `null` while there is none |
+| `last_message_preview` | Text of the newest user or assistant message that has text, whitespace collapsed, at most 120 characters (cut ones end with `…`); `""` if none |
+| `updated_at` | Bumped by new messages, renames, pin and archive changes (not by `read`) |
+
+#### Automatic titles
+
+When a conversation with `source: "chat"`, `title_source: "auto"` and an
+empty or placeholder title receives its first message, the title becomes
+that message's first ~40 characters (cut at a word boundary, with `…`)
+before the turn starts. When that first turn ends with `done`, a background
+call to the cheap model (`memory.extract_model`, else `llm.default`) proposes
+a title of at most 6 words, which replaces it unless the user renamed the
+conversation meanwhile. Unusable model output is ignored (the provisional
+title stays). Each change is announced with `conversation_updated`.
+Routine and Telegram conversations keep their titles (`routine: <name>`,
+`telegram`).
 
 ### `GET /v1/conversations`
 
-The caller's conversations, most recently updated first.
+The caller's conversations: pinned ones first, then by activity
+(`last_message_at`, or `created_at` for a conversation without messages),
+newest first.
+
+Query parameters (all optional):
+
+| Parameter | Meaning |
+|---|---|
+| `archived` | `false` (default): only unarchived; `true`: only archived; `all`: both |
+| `q` | Keep conversations whose title or user/assistant message text contains this (case-insensitive for ASCII; tool output is not searched; at most 200 bytes) |
+| `limit` | Page size, 1–200 (default 50) |
+| `before` | The `next_cursor` of the previous page (opaque) |
 
 Response `200`:
 
 ```json
-{ "conversations": [ { "id": "conv_3f2a…", "title": "Morning planning", "created_at": "…", "updated_at": "…" } ] }
+{
+  "conversations": [ { "id": "conv_3f2a…", "title": "Lisbon trip ideas", "title_source": "auto", "source": "chat", "pinned": true, "…": "…" } ],
+  "next_cursor": "MC4xNzYwMzA2MzAwMDAwLmNvbnZfM2Yy"
+}
 ```
+
+`next_cursor` is `null` on the last page. Errors: `400` for a bad
+`archived`, `limit`, or `before`.
 
 ### `GET /v1/conversations/{id}`
 
@@ -156,7 +221,7 @@ Response `200`:
 
 ```json
 {
-  "id": "conv_3f2a…", "title": "", "created_at": "…", "updated_at": "…",
+  "id": "conv_3f2a…", "title": "What's on example.com?", "title_source": "auto", "source": "chat", "…": "(the other conversation object fields)",
   "messages": [
     { "role": "user", "content": [ { "type": "text", "text": "What's on example.com?" } ], "created_at": "…" },
     { "role": "assistant", "content": [ { "type": "tool_use", "id": "toolu_01", "name": "websearch.fetch", "input": { "url": "https://example.com" } } ], "created_at": "…" },
@@ -197,8 +262,85 @@ Errors before streaming starts use normal JSON errors: `400`, `401`,
 `404` (conversation not found or not yours), `409` (a turn is already running
 in this conversation).
 
-If the client disconnects mid-turn the turn is canceled; any pending approval
-for it is marked `canceled`.
+If the client disconnects mid-turn the turn is canceled (it ends with
+`error` `turn canceled`); any pending approval for it is marked `canceled`.
+`POST /v1/conversations/{id}/stop` instead ends the turn gracefully (`done`
+with `"stopped": true`).
+
+The stream also carries `conversation_updated` for this conversation (for
+example the provisional [automatic title](#automatic-titles), sent before
+the turn's first event); clients that do not care can ignore it. The final
+generated title arrives after `done`, on `GET /v1/events` only.
+
+### `PATCH /v1/conversations/{id}`
+
+Changes the user-settable fields. Request (at least one field; unknown
+fields are rejected):
+
+```json
+{ "title": "Porto trip", "pinned": true, "archived": false }
+```
+
+`title` is cleaned like on create, must not be blank, and sets
+`title_source` to `"user"`. Response `200`: the
+[conversation object](#conversation-object). Publishes
+`conversation_updated`. Errors: `400`, `404`.
+
+### `DELETE /v1/conversations/{id}`
+
+Deletes the conversation and all its messages. Pending approvals in it are
+canceled first (each publishes `approval_resolved` with `decision:
+"canceled"`). Response `204`; publishes `conversation_deleted`. Errors:
+`404`, `409` while a turn started through this API is running in it (stop
+it first).
+
+### `POST /v1/conversations/{id}/stop`
+
+Stops the turn running in the conversation. The turn stores the assistant
+text streamed so far, skips memory extraction, and its stream ends with
+`done` `{"stopped": true}` (pending approvals of the turn are canceled).
+Response `202`:
+
+```json
+{ "stopped": true }
+```
+
+`stopped` is `false` when no turn was running (nothing to do; not an
+error). Only turns started with `POST …/messages` can be stopped (not
+routine or Telegram turns). Errors: `404`.
+
+### `POST /v1/conversations/{id}/read`
+
+Clears `unread`. Response `204`; publishes `conversation_updated` if it
+changed. Errors: `404`.
+
+### `GET /v1/conversations/{id}/export`
+
+Downloads the conversation. `?format=markdown` (default; `md` also accepted)
+answers `text/markdown; charset=utf-8` with `Content-Disposition:
+attachment; filename="<title-slug>.md"` (the id when the title has no
+letters or digits):
+
+```markdown
+# Lisbon trip ideas
+
+_Exported from Bosun on 2026-10-14 10:00 UTC · conversation `conv_3f2a…` · started 2026-10-12 22:00 UTC_
+
+## You · 2026-10-12 22:00 UTC
+
+Plan a three day trip to Lisbon
+
+## Bosun · 2026-10-12 22:00 UTC
+
+> ⚙ Tool call `websearch.search` `{"q":"Lisbon October weather"}`
+
+> Result: Mild, 22 °C … (tool results are cut to 500 characters)
+
+Lisbon in October is mild; here is a three-day plan…
+```
+
+`?format=json` answers the `GET /v1/conversations/{id}` body as an
+attachment (`<title-slug>.json`). Errors: `400` (other formats), `404`.
 
 ### `GET /v1/approvals`
 
@@ -600,7 +742,7 @@ interactive turns; a tool call that needs approval produces the usual
 `approval_required` event and the run waits for the answer (or the approval
 timeout). Each run gets a new conversation titled `routine: <name>`, readable
 with `GET /v1/conversations/{id}`; when it ends the owner's clients receive a
-`routine_finished` event.
+`routine_finished` event. A run that produced a reply marks its conversation `unread` (announced with `conversation_updated`).
 
 Routine IDs and run IDs are integers. All routine endpoints are scoped to the
 caller; another user's routine is `404`.
@@ -1078,9 +1220,11 @@ brevity.
 | `tool_result` | `{"id": "toolu_01", "summary": "3 events today"}` | A tool call finished (summary only; full results stay server-side) |
 | `approval_required` | `{"approval_id": "appr_…", "tool": "email.send", "args": {…}, "risk": "write"}` | A tool call is blocked waiting for the user; answer with `POST /v1/approvals/{id}`. Also carries `scope` and `has_preview` when they apply (see `GET /v1/approvals`) |
 | `approval_resolved` | `{"approval_id": "appr_…", "decision": "approve"}` | An approval was answered; `decision` is `approve`, `deny`, `expired`, or `canceled` |
-| `done` | `{}` | The turn finished successfully |
+| `done` | `{}` or `{"stopped": true}` | The turn finished successfully; `stopped` (omitted when false) means it was ended early by `POST /v1/conversations/{id}/stop` |
 | `error` | `{"message": "model request failed: …"}` | The turn failed; terminal |
 | `routine_finished` | `{"routine_id": 4, "run_id": 9, "status": "done"}` | A routine run ended (`status` is `done`, `error`, or `canceled`); `conversation_id` is the run's conversation. Sent on `GET /v1/events` only |
+| `conversation_updated` | `{"id": "conv_…", "title": "Lisbon trip ideas", "title_source": "auto", "pinned": false, "archived": false, "unread": false, "updated_at": "…"}` | A conversation's title, pin, archive, or unread state changed (rename, `PATCH`, automatic title, `read`, a routine reply marking it unread). `id` equals `conversation_id`. Also forwarded on that conversation's message stream |
+| `conversation_deleted` | `{"id": "conv_…"}` | A conversation was deleted (`id` equals `conversation_id`) |
 
 `tool_call.id` and `tool_result.id` match each other. A denied, timed-out, or
 failed tool call still produces a `tool_result`, whose summary starts with
@@ -1089,7 +1233,7 @@ result and the turn continues.
 
 Go types for every payload live in `internal/api/events`
 (`TextData`, `ToolCallData`, `ToolResultData`, `ApprovalRequiredData`,
-`ApprovalResolvedData`, `DoneData`, `ErrorData`, `RoutineFinishedData`); `events.ConversationOf`
+`ApprovalResolvedData`, `DoneData`, `ErrorData`, `RoutineFinishedData`, `ConversationUpdatedData`, `ConversationDeletedData`); `events.ConversationOf`
 returns an event's conversation. Server code publishes with
 `events.Bus.Publish(userID, events.Event{Type: events.TypeText, Data: …})` and
 writes per-request streams with `events.NewSSEWriter`.

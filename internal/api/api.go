@@ -99,6 +99,11 @@ type Options struct {
 	// Browser controls the browser integration's per-user Chromium behind
 	// /v1/browser. Nil (integration disabled) answers 501.
 	Browser Browser
+
+	// Titler, if set, names new conversations after their first reply
+	// (usually *titles.Generator on memory.extract_model). Without it they
+	// keep the provisional title cut from the first message.
+	Titler Titler
 }
 
 // Server holds API dependencies.
@@ -130,7 +135,14 @@ type Server struct {
 	channels Channels
 
 	turnsMu sync.Mutex
-	turns   map[string]bool // conversations with a turn in progress
+	turns   map[string]context.CancelCauseFunc // conversations with a turn (or a delete) in progress
+
+	titler   Titler
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgMu     sync.Mutex
+	bgClosed bool
+	bg       sync.WaitGroup // background title generation
 
 	credTests *rateLimiter // POST /v1/integrations/{name}/test, per user
 
@@ -151,7 +163,7 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{auth: o.Auth, bus: o.Bus, log: o.Logger, version: o.Version, heartbeat: o.Heartbeat,
 		convs: o.Conversations, agent: o.Agent, approvals: o.Approvals, policy: o.Policy, defaults: o.PolicyDefaults,
-		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, hooks: o.Hooks, turns: map[string]bool{}}
+		tools: o.Tools, audit: o.Audit, memories: o.Memories, webUI: o.WebUI, integrations: o.Integrations, hooks: o.Hooks, turns: map[string]context.CancelCauseFunc{}}
 	s.routines = o.Routines
 	s.creds = o.Credentials
 	s.oauth = o.OAuth
@@ -161,6 +173,8 @@ func New(o Options) (*Server, error) {
 	s.inviteAccepts = newRateLimiter(InviteAcceptsPerMinute, time.Minute)
 	s.trustedProxies, s.proxyStats, s.doctor = o.TrustedProxies, o.ProxyStats, o.Doctor
 	s.browser = o.Browser
+	s.titler = o.Titler
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -191,6 +205,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/conversations", authed(s.handleListConversations))
 	mux.Handle("GET /v1/conversations/{id}", authed(s.handleGetConversation))
 	mux.Handle("POST /v1/conversations/{id}/messages", authed(s.handlePostMessage))
+	mux.Handle("PATCH /v1/conversations/{id}", authed(s.handlePatchConversation))
+	mux.Handle("DELETE /v1/conversations/{id}", authed(s.handleDeleteConversation))
+	mux.Handle("POST /v1/conversations/{id}/stop", authed(s.handleStopConversation))
+	mux.Handle("POST /v1/conversations/{id}/read", authed(s.handleReadConversation))
+	mux.Handle("GET /v1/conversations/{id}/export", authed(s.handleExportConversation))
 	mux.Handle("GET /v1/approvals", authed(s.handleListApprovals))
 	mux.Handle("POST /v1/approvals/{id}", authed(s.handleResolveApproval))
 	mux.Handle("GET /v1/approvals/{id}/preview", authed(s.handleApprovalPreview))

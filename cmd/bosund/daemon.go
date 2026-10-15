@@ -41,6 +41,7 @@ import (
 	"github.com/perishabledave/bosun/internal/policy"
 	"github.com/perishabledave/bosun/internal/routines"
 	"github.com/perishabledave/bosun/internal/store"
+	"github.com/perishabledave/bosun/internal/titles"
 	"github.com/perishabledave/bosun/internal/vault"
 	"github.com/perishabledave/bosun/internal/webui"
 )
@@ -375,6 +376,13 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	if err != nil {
 		return nil, err
 	}
+	// Conversation titles use the cheap extraction model (memory on or off).
+	var titler api.Titler
+	if tProv, tModel, err := llms.Resolve(cfg.ExtractModelRef()); err == nil {
+		titler = titles.NewGenerator(tProv, tModel, auditLog, log)
+	} else {
+		log.Warn("conversation titles: model not available; keeping titles cut from the first message", "model", cfg.ExtractModelRef(), "err", err)
+	}
 	apiSrv, err := api.New(api.Options{
 		Auth: d.auth, Bus: d.bus, Logger: log, Version: version,
 		Conversations: d.store, Agent: d.agent, Approvals: appr, Policy: engine, PolicyDefaults: defaults,
@@ -391,6 +399,7 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 		ProxyStats:     &api.ProxyStats{},
 		Doctor:         d.doctorChecks,
 		Browser:        d.browserControl(),
+		Titler:         titler,
 	})
 	if err != nil {
 		return nil, err
@@ -549,6 +558,9 @@ func (d *daemon) Close() {
 	if d.agent != nil {
 		d.agent.Close()
 		d.agent = nil
+	}
+	if d.apiSrv != nil {
+		d.apiSrv.Close() // background title generation writes the store
 	}
 	d.stopBackground() // approval and session sweeps, the routine loop
 	if d.bgCancel != nil {

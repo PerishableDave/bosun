@@ -6,6 +6,7 @@ package events
 import (
 	"encoding/json"
 	"sync"
+	"time"
 )
 
 // Event types sent over SSE. See docs/API.md.
@@ -19,7 +20,31 @@ const (
 	TypeError            = "error"
 	// TypeRoutineFinished announces that a routine run ended.
 	TypeRoutineFinished = "routine_finished"
+	// TypeConversationUpdated announces a change to a conversation's
+	// title, pin, archive, or unread state.
+	TypeConversationUpdated = "conversation_updated"
+	// TypeConversationDeleted announces that a conversation was deleted.
+	TypeConversationDeleted = "conversation_deleted"
 )
+
+// ConversationUpdatedData is the new list state of a conversation. ID and
+// ConversationID are the same; ID is what list clients key on.
+type ConversationUpdatedData struct {
+	ID             string    `json:"id"`
+	Title          string    `json:"title"`
+	TitleSource    string    `json:"title_source"`
+	Pinned         bool      `json:"pinned"`
+	Archived       bool      `json:"archived"`
+	Unread         bool      `json:"unread"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ConversationID string    `json:"conversation_id"`
+}
+
+// ConversationDeletedData names a deleted conversation.
+type ConversationDeletedData struct {
+	ID             string `json:"id"`
+	ConversationID string `json:"conversation_id"`
+}
 
 // RoutineFinishedData reports the outcome of a routine run to its owner.
 // Status is "done", "error", or "canceled"; the reply is in the run (GET
@@ -85,6 +110,9 @@ type (
 	// DoneData ends a message stream.
 	DoneData struct {
 		ConversationID string `json:"conversation_id,omitempty"`
+		// Stopped is set when the turn ended early because the user
+		// stopped it (POST /v1/conversations/{id}/stop).
+		Stopped bool `json:"stopped,omitempty"`
 	}
 	// ErrorData reports a failure.
 	ErrorData struct {
@@ -113,6 +141,10 @@ func ConversationOf(ev Event) string {
 		return d.ConversationID
 	case RoutineFinishedData:
 		return d.ConversationID
+	case ConversationUpdatedData:
+		return d.ID
+	case ConversationDeletedData:
+		return d.ID
 	}
 	return ""
 }

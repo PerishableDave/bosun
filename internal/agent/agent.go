@@ -130,6 +130,12 @@ func newAgent(reg *llm.Registry, defaultModel string, disp *dispatch.Dispatcher,
 // after the step budget is spent.
 var ErrStepBudget = errors.New("agent: step budget exhausted")
 
+// ErrStopped is the cancellation cause (context.WithCancelCause) that marks
+// a turn as stopped by the user rather than abandoned: Run then stores the
+// assistant text streamed so far, publishes done with stopped set, and
+// returns nil.
+var ErrStopped = errors.New("agent: turn stopped by the user")
+
 // turnError is an error whose Public text is safe to show the client.
 type turnError struct {
 	public string
@@ -167,9 +173,21 @@ func (a *Agent) RunWithModel(ctx context.Context, userID int64, conversationID, 
 
 // RunWith is Run with per-turn options.
 func (a *Agent) RunWith(ctx context.Context, userID int64, conversationID, userText string, opts RunOptions) (err error) {
-	var reply strings.Builder // assistant text of this turn, for memory extraction
-	untrusted := false        // any tool result this turn was untrusted (gates extraction)
+	var reply strings.Builder   // assistant text of this turn, for memory extraction
+	var partial strings.Builder // text streamed by the current model call, not yet stored
+	untrusted := false          // any tool result this turn was untrusted (gates extraction)
 	defer func() {
+		if err != nil && errors.Is(context.Cause(ctx), ErrStopped) {
+			// The user stopped the turn: keep what was already said and
+			// end it like a finished turn (no memory extraction).
+			if t := strings.TrimSpace(partial.String()); t != "" {
+				a.appendDetached(conversationID, llm.NewTextMessage(llm.RoleAssistant, partial.String()))
+			}
+			a.log.InfoContext(ctx, "agent: turn stopped by the user", "user_id", userID, "conversation_id", conversationID)
+			a.publish(userID, events.TypeDone, events.DoneData{ConversationID: conversationID, Stopped: true})
+			err = nil
+			return
+		}
 		if err == nil {
 			// Start extraction before done is published, so a client that
 			// has seen done can rely on Wait covering this turn.
@@ -225,12 +243,14 @@ func (a *Agent) RunWith(ctx context.Context, userID int64, conversationID, userT
 		if err := a.hooks.RunPreModelCall(ctx, userID, &req); err != nil {
 			return &turnError{public: "blocked by pre_model_call hook", err: err}
 		}
-		resp, err := a.callModel(ctx, prov, req, names, userID, conversationID)
+		partial.Reset()
+		resp, err := a.callModel(ctx, prov, req, names, userID, conversationID, &partial)
 		a.recordLLM(userID, prov.Name(), model, step, history[sent:], resp, err)
 		sent = len(history)
 		if err != nil {
 			return err
 		}
+		partial.Reset() // the response is stored below
 		msg := resp.Message
 		msg.Role = llm.RoleAssistant
 		if len(msg.Content) == 0 {
@@ -270,7 +290,7 @@ func (a *Agent) RunWith(ctx context.Context, userID int64, conversationID, userT
 
 // callModel streams one model call, forwarding text deltas and completed
 // tool calls as events, and returns the assembled response.
-func (a *Agent) callModel(ctx context.Context, prov llm.Provider, req llm.Request, names nameCodec, userID int64, convID string) (llm.Response, error) {
+func (a *Agent) callModel(ctx context.Context, prov llm.Provider, req llm.Request, names nameCodec, userID int64, convID string, partial *strings.Builder) (llm.Response, error) {
 	ch, err := prov.Stream(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -288,6 +308,7 @@ func (a *Agent) callModel(ctx context.Context, prov llm.Provider, req llm.Reques
 		switch ev.Type {
 		case llm.EventTextDelta:
 			if ev.Text != "" {
+				partial.WriteString(ev.Text)
 				a.publish(userID, events.TypeText, events.TextData{Delta: ev.Text, ConversationID: convID})
 			}
 		case llm.EventToolUseStart:

@@ -257,7 +257,7 @@ func TestChatTurnStreamsEditsAndFinalMessage(t *testing.T) {
 	// the next message; /new starts another.
 	calls := e.runner.calls()
 	conv, err := e.st.GetConversation(e.ctx, e.alice.ID, calls[0].conv)
-	if err != nil || conv.Title != ConversationTitle || calls[0].text != "hi there" {
+	if err != nil || conv.Title != ConversationTitle || conv.Source != store.SourceTelegram || calls[0].text != "hi there" {
 		t.Fatalf("conversation = %+v, %v (call %+v)", conv, err, calls[0])
 	}
 	e.runner.fn = func(ctx context.Context, userID int64, c, text string) error {

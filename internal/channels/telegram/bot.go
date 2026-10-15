@@ -61,7 +61,7 @@ type Runner interface {
 // Store is the subset of *store.Store the bot needs.
 type Store interface {
 	GetUser(ctx context.Context, id int64) (*store.User, error)
-	CreateConversation(ctx context.Context, userID int64, title string, routineID int64) (*store.Conversation, error)
+	CreateConversationWith(ctx context.Context, userID int64, nc store.NewConversation) (*store.Conversation, error)
 	GetConversation(ctx context.Context, userID int64, id string) (*store.Conversation, error)
 	GetRoutine(ctx context.Context, userID, id int64) (*store.Routine, error)
 	GetRoutineRun(ctx context.Context, userID, runID int64) (*store.RoutineRun, error)
@@ -571,7 +571,7 @@ func (b *Bot) conversation(link channels.Link) (string, error) {
 }
 
 func (b *Bot) newConversation(link channels.Link) (string, error) {
-	conv, err := b.o.Store.CreateConversation(b.ctx, link.UserID, ConversationTitle, 0)
+	conv, err := b.o.Store.CreateConversationWith(b.ctx, link.UserID, store.NewConversation{Title: ConversationTitle, Source: store.SourceTelegram})
 	if err != nil {
 		return "", err
 	}
