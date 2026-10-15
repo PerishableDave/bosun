@@ -28,6 +28,7 @@ import (
 	"github.com/perishabledave/bosun/internal/integration"
 	"github.com/perishabledave/bosun/internal/integrations/calendar"
 	"github.com/perishabledave/bosun/internal/integrations/email"
+	"github.com/perishabledave/bosun/internal/integrations/files"
 	"github.com/perishabledave/bosun/internal/integrations/mcp"
 	"github.com/perishabledave/bosun/internal/integrations/notes"
 	"github.com/perishabledave/bosun/internal/integrations/websearch"
@@ -50,6 +51,7 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
+	"files": func(*slog.Logger) integration.Integration { return files.New() },
 	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
 	"email": func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
 }

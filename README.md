@@ -456,6 +456,49 @@ integrations:
   files/folders (`.git`, `.obsidian`), other extensions, and symlinks that
   point outside the folder are refused. Reads return at most 200 KB.
 
+### Files
+
+The `files` integration gives the assistant access to **only the folders you
+list**, as the OS user running `bosund`. It is off by default (`bosun setup`
+leaves it alone); enable it and restart:
+
+```yaml
+integrations:
+  files:
+    enabled: true
+    roots:
+      - path: ~/Documents/Shared   # ~ is expanded for the daemon user
+        name: shared               # how the model refers to it: shared/report.md
+        writable: true
+      - path: /srv/media
+        name: media
+        writable: false
+    max_read: 2MiB                 # per files.read call, and the largest file searched
+    extensions: []                 # empty = any; else e.g. [.md, .txt, .csv, .json, .pdf]
+    include_hidden: false          # true allows dotfiles such as .git and .env
+```
+
+- Tools: `files.roots`, `files.list`, `files.search`, `files.read`,
+  `files.stat` (read risk, allowed by default); `files.write`, `files.append`,
+  `files.move`, `files.mkdir` (write risk, ask by default); `files.delete`
+  (destructive, asks by default; files only, never folders). Capabilities are
+  `files.read`, `files.write` and `files.delete`.
+- Every path is `<root name>/<relative path>`. Absolute paths, `..`, hidden
+  entries, over-long names and symlinks that resolve outside the root are
+  refused; recursive list and search never follow symlinks. Errors never show
+  host paths. Writes need `writable: true`, are atomic (temp file then rename)
+  and refuse to replace an existing file unless the call says `overwrite: true`.
+  Moves stay inside one root. Files over 16 MiB are not written.
+- `files.read` returns UTF-8 text (invalid bytes replaced), capped at
+  `max_read` per call with an offset to continue. Binary files and images
+  return only type, size and (for images) dimensions. PDFs are not parsed by
+  Bosun; the read says so and points at the sandbox integration.
+- **Household caveat:** there is one filesystem for the whole household, not
+  per-user roots. Everyone who can talk to the assistant can use every root,
+  and file contents are treated as untrusted data because another household
+  member (or anything syncing into those folders) may have written them. Point
+  roots only at folders you are happy to share with all users.
+
 ### MCP servers
 
 Any [Model Context Protocol](https://modelcontextprotocol.io) server can add

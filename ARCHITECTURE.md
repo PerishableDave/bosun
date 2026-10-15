@@ -39,6 +39,7 @@ flowchart LR
         Cal[calendar]
         Mail[email]
         Notes[notes]
+        Files[files]
         Search[web search]
         MCP[mcp bridge]
     end
@@ -89,6 +90,7 @@ internal/
   integrations/      first-party integrations (one package each)
     calendar/
     email/
+    files/
     notes/
     websearch/
     mcp/             bridge: external MCP servers -> Integration
@@ -270,6 +272,7 @@ API keys do not leak into third-party servers.
 |---|---|---|
 | `websearch` | shared | `search`, `fetch` (read) |
 | `notes` | per user (or shared) | `list`, `search`, `read` (read); `write`, `append` (write); `delete` (destructive) |
+| `files` | shared | `roots`, `list`, `search`, `read`, `stat` (read); `write`, `append`, `move`, `mkdir` (write); `delete` (destructive). Only admin-listed roots, all results untrusted |
 | `email` | per user | `list`, `search`, `read`, `folders` (read); `draft`, `archive`, `mark` (write); `send` (destructive) |
 | `calendar` | per user | `calendars`, `events`, `get`, `freebusy` (read); `create`, `update` (write); `delete` (destructive). CalDAV, or read-only ICS feeds |
 

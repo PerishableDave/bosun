@@ -41,6 +41,7 @@ untrusted.
 | `oauth` | OAuth2 + PKCE, Google and Microsoft | `bosun connect google` | Vault resolver: any integration can ask for kind `oauth2:google` and get a fresh token |
 | `email` | IMAP4rev1 + SMTP, XOAUTH2 for Gmail | list, search, read, draft, send (destructive), archive, mark, folders | Poller emits `email.received` events for routines |
 | `calendar` | CalDAV + iCalendar, Google CalDAV with OAuth; read-only ICS feeds | calendars, events, get, create, update, delete, freebusy | RRULE expansion for the common cases. ICS backend: credential kinds `ics` / `ics:<name>` hold a private feed URL (Google "Secret address in iCal format", Outlook.com published calendar, iCloud public calendar); fetched over https with an SSRF guard, 5 MB cap and 5-minute per-user cache, merged as read-only calendars |
+| `files` | Local folders the admin lists (`roots`), as the daemon's OS user | roots, list, search, read, stat, write, append, move, mkdir, delete (destructive) | Shared across the household, results untrusted; symlink-escape and hidden-file guards; atomic writes, explicit `overwrite`; PDFs not parsed (sandbox integration) |
 | `channels/telegram` | Bot API, long polling | chat, inline Approve/Deny, routine deliveries | First channel; the `channels` framework is designed for Slack/Discord/iMessage next |
 
 ## Wave 2 (planned)
