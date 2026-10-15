@@ -26,6 +26,7 @@ import (
 	"github.com/perishabledave/bosun/internal/dispatch"
 	"github.com/perishabledave/bosun/internal/hooks"
 	"github.com/perishabledave/bosun/internal/integration"
+	"github.com/perishabledave/bosun/internal/integrations/browser"
 	"github.com/perishabledave/bosun/internal/integrations/calendar"
 	"github.com/perishabledave/bosun/internal/integrations/email"
 	"github.com/perishabledave/bosun/internal/integrations/mcp"
@@ -50,8 +51,9 @@ var builtins = map[string]func(log *slog.Logger) integration.Integration{
 	"mcp": func(log *slog.Logger) integration.Integration {
 		return mcp.New(mcp.WithLogger(log), mcp.WithClientVersion(version))
 	},
-	"notes": func(*slog.Logger) integration.Integration { return notes.New() },
-	"email": func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
+	"notes":   func(*slog.Logger) integration.Integration { return notes.New() },
+	"email":   func(log *slog.Logger) integration.Integration { return email.New(email.WithLogger(log)) },
+	"browser": func(*slog.Logger) integration.Integration { return browser.New() },
 }
 
 // deps lets tests substitute parts of the daemon. Zero values mean "build
@@ -296,12 +298,20 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 	d.bus = events.NewBus()
 	appr := approval.NewManager(d.store, d.bus, approval.Options{
 		Timeout: cfg.Policy.ApprovalTimeout, Audit: auditLog, Log: log, OnResolve: onApprovalHooks(hk),
+		PreviewDir: filepath.Join(cfg.Daemon.DataDir, "approvals"), AllowScope: allowScope(engine, auditLog),
 	})
 	n, err := appr.ExpireStale(ctx)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("stale approvals expired", "count", n)
+	d.every(ctx, time.Hour, true, func(ctx context.Context) {
+		if n, err := appr.SweepPreviews(ctx); err != nil {
+			log.Warn("sweep approval previews", "err", err)
+		} else if n > 0 {
+			log.Info("swept stale approval previews", "count", n)
+		}
+	})
 	sweep := dp.ApprovalSweep
 	if sweep <= 0 {
 		sweep = 30 * time.Second
@@ -372,6 +382,7 @@ func newDaemon(parent context.Context, cfg *config.Config, log *slog.Logger, dp 
 		TrustedProxies: proxyNets,
 		ProxyStats:     &api.ProxyStats{},
 		Doctor:         d.doctorChecks,
+		Browser:        d.browserControl(),
 	})
 	if err != nil {
 		return nil, err

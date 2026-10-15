@@ -394,11 +394,6 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "resolve approval", err)
 		return
 	}
-	if req.Always {
-		if a, gerr := s.approvals.Get(r.Context(), id, u.ID); gerr == nil {
-			s.recordConfigScoped(r.Context(), u.ID, a.Capability, a.Scope, "allow", "policy rule set from approval "+id)
-		}
-	}
 	a, err := s.approvals.Get(r.Context(), id, u.ID)
 	if err != nil {
 		s.internalError(w, r, "get approval", err)
