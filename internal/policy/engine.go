@@ -183,10 +183,24 @@ func (e *StoreEngine) defaultFor(c integration.Capability, risk integration.Risk
 				e.log.Warn("policy: deny (fail closed)", "reason", "invalid integration default", "capability", string(c), "decision", string(d))
 				return Deny
 			}
-			return d
+			// An integration may only tighten the admin's risk default,
+			// never loosen it: a manifest declaring "allow" for a write
+			// capability still asks when the admin's write default is ask.
+			return stricter(d, e.def.ForRisk(risk))
 		}
 	}
 	return e.def.ForRisk(risk)
+}
+
+// strictness orders decisions from most to least permissive.
+var strictness = map[Decision]int{Allow: 0, Ask: 1, Deny: 2}
+
+// stricter returns the less permissive of a and b.
+func stricter(a, b Decision) Decision {
+	if strictness[b] > strictness[a] {
+		return b
+	}
+	return a
 }
 
 func hasCondition(c json.RawMessage) bool {

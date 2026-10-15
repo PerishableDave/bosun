@@ -468,7 +468,8 @@ users:
 
 - Precedence: scoped rule (for the scope or a parent domain of it) >
   capability-wide rule > the integration's default for the capability
-  (`Manifest.DefaultDecisions`, e.g. `browser.read: ask`) > risk default >
+  (`Manifest.DefaultDecisions`, e.g. `browser.read: ask`; it can only
+  tighten the admin's risk default, never loosen it) > risk default >
   `deny`. Unknown capabilities are denied. `GET /v1/tools` and
   `bosun tools` show the resulting decision per tool.
   `bosun policy set browser.act allow --scope opentable.com`.

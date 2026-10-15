@@ -73,3 +73,20 @@ func TestIntegrationDefaultPrecedence(t *testing.T) {
 		t.Errorf("capability rule deny = %s", got)
 	}
 }
+
+func TestCapabilityDefaultOnlyTightens(t *testing.T) {
+	for _, tc := range []struct {
+		manifest, risk, want Decision
+	}{
+		{Ask, Allow, Ask},   // tighten: allowed
+		{Allow, Ask, Ask},   // loosen: refused, admin default wins
+		{Allow, Deny, Deny}, // loosen: refused
+		{Deny, Allow, Deny}, // tighten
+		{Ask, Deny, Deny},   // admin stricter
+	} {
+		got := stricter(tc.manifest, tc.risk)
+		if got != tc.want {
+			t.Errorf("stricter(%s, %s) = %s, want %s", tc.manifest, tc.risk, got, tc.want)
+		}
+	}
+}

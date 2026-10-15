@@ -288,7 +288,8 @@ The caller's effective permission configuration: the per-risk defaults (from
 capability, then scope. Precedence: a rule for (capability, site) (or for a
 parent domain of the site) beats the capability-wide rule, which beats the
 integration's own default for the capability (`integration_defaults`, e.g.
-`browser.read` asks), which beats the risk default; capabilities no
+`browser.read` asks; an integration default can only be stricter than
+the risk default, never looser), which beats the risk default; capabilities no
 registered tool declares are always denied.
 Scoped rules only apply to tools that declare a scope argument (the
 browser's); `scope` is omitted for capability-wide rules.
