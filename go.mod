@@ -3,8 +3,8 @@ module github.com/perishabledave/bosun
 go 1.26.0
 
 require (
-	github.com/chromedp/cdproto v0.157.8
-	github.com/chromedp/chromedp v0.21.0
+	github.com/chromedp/cdproto v0.159.0
+	github.com/chromedp/chromedp v0.23.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
